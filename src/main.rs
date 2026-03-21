@@ -4,10 +4,12 @@ mod chemistry;
 mod world;
 mod player;
 mod ui;
+mod ai;
 
 use universe::galaxy::Galaxy;
 use universe::system::StarSystem;
 use universe::planet::Planet;
+use universe::catalog;
 use player::state::PlayerState;
 use player::ship::Ship;
 use player::inventory::Inventory;
@@ -16,6 +18,7 @@ use physics::constants::{C, M_SUN};
 use chemistry::element::periodic_table;
 use ui::terminal::*;
 use ui::display::separator;
+use ai::computer::ShipComputer;
 
 struct GameState {
     player: PlayerState,
@@ -23,18 +26,20 @@ struct GameState {
     inventory: Inventory,
     galaxy: Galaxy,
     current_system: StarSystem,
+    computer: ShipComputer,
 }
 
 impl GameState {
     fn new(player_name: String) -> Self {
         let mut galaxy = Galaxy::new("The Milky Way".to_string(), 0xDEADBEEF_C0FFEE);
-        let current_system = galaxy.system_at(0, 0, 0);
+        let current_system = galaxy.system_at(0.0, 0.0, 0.0);
         GameState {
             player: PlayerState::new(player_name),
             ship: Ship::starter(),
             inventory: Inventory::new(10_000.0),
             galaxy,
             current_system,
+            computer: ShipComputer::new(),
         }
     }
 }
@@ -67,7 +72,8 @@ fn main() {
 fn game_loop(gs: &mut GameState) {
     loop {
         clear();
-        print_header(&format!("COSMOS  |  {}  |  {:?}", gs.player.name, gs.player.position));
+        let [px, py, pz] = gs.player.position;
+        print_header(&format!("COSMOS  |  {}  |  ({:.2}, {:.2}, {:.2}) ly", gs.player.name, px, py, pz));
 
         println!("  Current system : {}", gs.current_system.name);
         println!("  Star           : {} — {}", gs.current_system.star.name, gs.current_system.star.spectral_class.display());
@@ -86,6 +92,7 @@ fn game_loop(gs: &mut GameState) {
         println!("  [5] Inspect your ship & inventory");
         println!("  [6] Periodic table reference");
         println!("  [7] Physics reference");
+        println!("  [8] Consult ARIA (ship's AI)");
         println!("  [q] Quit");
 
         let choice = prompt("\n  > ");
@@ -98,6 +105,7 @@ fn game_loop(gs: &mut GameState) {
             "5" => ship_status(gs),
             "6" => periodic_table_menu(),
             "7" => physics_menu(gs),
+            "8" => aria_chat(gs),
             "q" | "Q" => {
                 println!("\n  Safe travels, {}. The stars will remember you.", gs.player.name);
                 break;
@@ -213,32 +221,53 @@ fn travel_menu(gs: &mut GameState) {
     clear();
     print_header("INTERSTELLAR TRAVEL");
 
-    println!("  Current position : {:?}", gs.player.position);
+    let [px, py, pz] = gs.player.position;
+    println!("  Current system   : {}  ({:.2}, {:.2}, {:.2}) ly", gs.current_system.name, px, py, pz);
     println!("  Ship max velocity: {:.2}c", gs.ship.max_velocity_c);
     println!();
-    println!("  Enter destination coordinates (x y z in light-years, e.g. \"1 0 0\"):");
-    println!("  Or press Enter to cancel.");
+
+    // Show nearby catalog stars
+    let nearby = Galaxy::nearest_catalog_stars(px, py, pz, 30.0);
+    if !nearby.is_empty() {
+        println!("  Nearby systems (within 30 ly):");
+        println!("  {:>22}  {:>8}  {:>8}  {}", "Name", "Dist (ly)", "Class", "Notes");
+        println!("  {}", separator());
+        for (entry, dist) in nearby.iter().take(12) {
+            let note_preview = entry.notes.split('.').next().unwrap_or("").trim();
+            println!("  {:>22}  {:>8.2}  {:>8}  {}",
+                entry.name, dist, entry.spectral, note_preview);
+        }
+        println!();
+    }
+
+    println!("  Enter a star name (e.g. \"Alpha Centauri A\", \"TRAPPIST-1\")");
+    println!("  or coordinates in ly (e.g. \"4.2 -1.5 0\").  Enter to cancel.");
 
     let input = prompt("\n  > ");
     if input.is_empty() { return; }
 
-    let parts: Vec<i32> = input.split_whitespace()
-        .filter_map(|s| s.parse().ok())
-        .collect();
+    // Try name lookup first
+    let dest: [f64; 3] = if let Some(entry) = catalog::find_by_name(input.trim()) {
+        [entry.x_ly, entry.y_ly, entry.z_ly]
+    } else {
+        // Fall back to coordinate parse
+        let parts: Vec<f64> = input.split_whitespace()
+            .filter_map(|s| s.parse().ok())
+            .collect();
+        if parts.len() != 3 {
+            println!("  Unknown star name and invalid coordinates.");
+            pause();
+            return;
+        }
+        [parts[0], parts[1], parts[2]]
+    };
 
-    if parts.len() != 3 {
-        println!("  Invalid coordinates.");
-        pause();
-        return;
-    }
-
-    let dest = [parts[0], parts[1], parts[2]];
-    let dx = (dest[0] - gs.player.position[0]) as f64;
-    let dy = (dest[1] - gs.player.position[1]) as f64;
-    let dz = (dest[2] - gs.player.position[2]) as f64;
+    let dx = dest[0] - px;
+    let dy = dest[1] - py;
+    let dz = dest[2] - pz;
     let distance_ly = (dx*dx + dy*dy + dz*dz).sqrt();
 
-    if distance_ly == 0.0 {
+    if distance_ly < 0.01 {
         println!("  You are already there.");
         pause();
         return;
@@ -251,16 +280,16 @@ fn travel_menu(gs: &mut GameState) {
     let fuel_cost = distance_ly * 5.0;
 
     println!();
-    println!("  Distance          : {:.2} light-years", distance_ly);
+    println!("  Distance          : {:.4} light-years", distance_ly);
     println!("  Travel velocity   : {:.4}c", v);
-    println!("  Lorentz factor γ  : {:.4}  (time dilation factor)", gamma);
-    println!("  Coord. time       : {:.2} years  (time in the galaxy's frame)", coord_time_yr);
-    println!("  Proper time       : {:.2} years  (time YOU experience)", proper_time_yr);
+    println!("  Lorentz factor γ  : {:.6}  (time dilation factor)", gamma);
+    println!("  Coord. time       : {:.4} years  (time in the galaxy's frame)", coord_time_yr);
+    println!("  Proper time       : {:.4} years  (time YOU experience)", proper_time_yr);
     println!("  Fuel required     : {:.1}  (you have {:.1})", fuel_cost, gs.ship.fuel);
 
     if gamma > 1.001 {
         println!();
-        println!("  RELATIVITY: At {:.2}c, γ = {:.4}. You age {:.2}× slower than the galaxy.", v, gamma, gamma);
+        println!("  RELATIVITY: At {:.2}c, γ = {:.4}. You age {:.4}× slower than the galaxy.", v, gamma, 1.0/gamma);
     }
 
     if fuel_cost > gs.ship.fuel {
@@ -276,35 +305,96 @@ fn travel_menu(gs: &mut GameState) {
     gs.player.coordinate_time_s += coord_time_yr * 365.25 * 86_400.0;
     gs.player.proper_time_s += proper_time_yr * 365.25 * 86_400.0;
     gs.player.position = dest;
-    gs.player.visited_systems.push(dest);
     gs.current_system = gs.galaxy.system_at(dest[0], dest[1], dest[2]);
+    let name = gs.current_system.name.clone();
+    if !gs.player.visited_systems.contains(&name) {
+        gs.player.visited_systems.push(name.clone());
+    }
 
-    println!("\n  Arrived at {}.", gs.current_system.name);
+    println!("\n  Arrived at {}.", name);
     pause();
 }
 
 fn star_chart(gs: &mut GameState) {
-    clear();
-    print_header("STAR CHART — Known Systems");
+    loop {
+        clear();
+        print_header("STAR CHART — The Real Milky Way");
 
-    if gs.player.visited_systems.is_empty() {
-        println!("  No systems visited yet.");
-    } else {
-        println!("  {:>20}  {:>6}  {:>6}  {:>6}  {}", "Name", "X", "Y", "Z", "Star Class");
-        println!("  {}", separator());
-        for coords in &gs.player.visited_systems {
-            if let Some(sys) = gs.galaxy.known_systems.iter().find(|s| {
-                s.galactic_x as i32 == coords[0]
-                    && s.galactic_y as i32 == coords[1]
-                    && s.galactic_z as i32 == coords[2]
-            }) {
-                println!("  {:>20}  {:>6}  {:>6}  {:>6}  {}",
-                    sys.name, coords[0], coords[1], coords[2],
-                    sys.star.spectral_class.display().split(' ').next().unwrap_or("?"));
+        let [px, py, pz] = gs.player.position;
+
+        // Visited systems
+        print_section("VISITED SYSTEMS");
+        if gs.player.visited_systems.is_empty() {
+            println!("  None.");
+        } else {
+            println!("  {:>22}  {:>9}  {:>8}  {}", "Name", "Dist (ly)", "Class", "HZ planets");
+            println!("  {}", separator());
+            for name in &gs.player.visited_systems {
+                if let Some(e) = catalog::find_by_name(name) {
+                    let d = dist3(e.x_ly, e.y_ly, e.z_ly, px, py, pz);
+                    let hz = catalog::build_known_planets(name).iter()
+                        .filter(|p| {
+                            let (hz_i, hz_o) = {
+                                let lum = e.luminosity;
+                                ((lum / 1.1_f64).sqrt(), (lum / 0.53_f64).sqrt())
+                            };
+                            p.orbit_au >= hz_i && p.orbit_au <= hz_o
+                        })
+                        .count();
+                    let hz_str = if hz > 0 { format!("{}", hz) } else { "—".to_string() };
+                    println!("  {:>22}  {:>9.4}  {:>8}  {}", name, d, e.spectral, hz_str);
+                } else {
+                    println!("  {:>22}  (unknown)", name);
+                }
             }
         }
+
+        println!();
+        print_section("CATALOG SEARCH");
+        println!("  [1] Show nearest 20 stars  [2] Show all stars with known planets  [q] Back");
+        let choice = prompt("\n  > ");
+        match choice.as_str() {
+            "1" => {
+                clear();
+                print_header("NEAREST 20 STARS");
+                let nearby = Galaxy::nearest_catalog_stars(px, py, pz, 999999.0);
+                println!("  {:>24}  {:>9}  {:>7}  {:>6}  {}", "Name", "Dist (ly)", "Class", "Temp K", "Notes");
+                println!("  {}", separator());
+                for (e, d) in nearby.iter().take(20) {
+                    let note = e.notes.split('.').next().unwrap_or("").trim();
+                    println!("  {:>24}  {:>9.4}  {:>7}  {:>6.0}  {}", e.name, d, e.spectral, e.temp_k, note);
+                }
+                pause();
+            }
+            "2" => {
+                clear();
+                print_header("STARS WITH KNOWN PLANETS");
+                println!("  {:>22}  {:>9}  {:>7}  {}", "Star", "Dist (ly)", "Class", "Planets");
+                println!("  {}", separator());
+                // Collect unique stars that have planets
+                let mut shown = std::collections::HashSet::new();
+                for p in crate::universe::catalog::PLANETS {
+                    if shown.contains(p.star_name) { continue; }
+                    shown.insert(p.star_name);
+                    if let Some(e) = catalog::find_by_name(p.star_name) {
+                        let d = dist3(e.x_ly, e.y_ly, e.z_ly, px, py, pz);
+                        let count = crate::universe::catalog::PLANETS.iter()
+                            .filter(|q| q.star_name == p.star_name).count();
+                        println!("  {:>22}  {:>9.2}  {:>7}  {} planet(s)",
+                            e.name, d, e.spectral, count);
+                    }
+                }
+                pause();
+            }
+            "q" | "Q" => break,
+            _ => { pause(); }
+        }
     }
-    pause();
+}
+
+fn dist3(ax: f64, ay: f64, az: f64, bx: f64, by: f64, bz: f64) -> f64 {
+    let dx = ax - bx; let dy = ay - by; let dz = az - bz;
+    (dx*dx + dy*dy + dz*dz).sqrt()
 }
 
 fn ship_status(gs: &mut GameState) {
@@ -490,4 +580,181 @@ fn relativistic_status(gs: &GameState) {
         println!("  Travel at significant fractions of c to observe time dilation.");
     }
     pause();
+}
+
+// ── ARIA — Ship's AI Computer ────────────────────────────────────────────────
+
+/// Build the system prompt injected into every ARIA request.
+/// This gives Claude real-time context about where the player is and what they're seeing.
+fn build_aria_system_prompt(gs: &GameState) -> String {
+    let sys = &gs.current_system;
+    let star = &sys.star;
+    let (hz_inner, hz_outer) = star.habitable_zone_au();
+
+    let location = if let Some(idx) = gs.player.landed_on {
+        if idx < sys.planets.len() {
+            let p = &sys.planets[idx];
+            let atm_desc = if p.atmosphere.pressure_bar == 0.0 {
+                "no atmosphere".to_string()
+            } else {
+                let top = p.atmosphere.components.iter()
+                    .max_by(|a, b| a.fraction.partial_cmp(&b.fraction).unwrap())
+                    .map(|c| format!("{} ({:.0}%)", c.name, c.fraction * 100.0))
+                    .unwrap_or_default();
+                format!("{:.3} bar, dominant: {}, breathable: {}",
+                    p.atmosphere.pressure_bar, top,
+                    if p.atmosphere.is_breathable() { "yes" } else { "no" })
+            };
+            format!(
+                "Landed on {} — {} class, {:.0} K ({:.0}°C), gravity {:.2}g, \
+                 escape velocity {:.2} km/s. Atmosphere: {}.",
+                p.name, p.planet_type.display(),
+                p.surface_temp_k, p.surface_temp_k - 273.15,
+                p.surface_gravity_ms2() / 9.807,
+                p.escape_velocity_ms() / 1000.0,
+                atm_desc
+            )
+        } else {
+            format!("In space within the {} system.", sys.name)
+        }
+    } else {
+        format!("In space within the {} system.", sys.name)
+    };
+
+    let coord_yr = gs.player.coordinate_time_s / 31_557_600.0;
+    let proper_yr = gs.player.proper_time_s / 31_557_600.0;
+    let [px, py, pz] = gs.player.position;
+    let dist_sol = (px*px + py*py + pz*pz).sqrt();
+
+    // Real catalog notes for this star if available
+    let catalog_note = catalog::find_by_name(&sys.name)
+        .map(|e| format!("\n  Catalog note  : {}", e.notes))
+        .unwrap_or_default();
+
+    format!(
+        "You are ARIA (Astrophysical Research & Intelligence Assistant), \
+the onboard AI computer of the explorer ship Perihelion I. You are scientifically \
+precise, concise, and educational. Your purpose is to help the explorer understand \
+the physics, chemistry, and astronomy of everything they encounter on their journey.\n\n\
+CURRENT MISSION STATE:\n\
+  Star system   : {name} | Class: {cls} | {temp:.0} K | {lum:.4} L☉ | {mass:.3} M☉ | Age: {age:.1} Gyr\n\
+  Distance Sol  : {dist:.4} ly{cat_note}\n\
+  Habitable zone: {hz_i:.2}–{hz_o:.2} AU | Planets: {npl}\n\
+  Location      : {loc}\n\
+  Proper time   : {prop:.4} yr (your frame) | Coordinate time: {coord:.4} yr (galaxy frame)\n\
+  Ship max v    : {vel:.2}c\n\n\
+GUIDELINES:\n\
+  - Ground every explanation in what the explorer can actually see or measure right now\n\
+  - Use real values and equations when helpful (e.g. γ = 1/√(1−v²/c²))\n\
+  - When discussing elements or compounds, connect them to real periodic-table properties\n\
+  - Be concise: 2–4 short paragraphs unless a deep dive is explicitly requested\n\
+  - If a question is ambiguous, answer the most physically interesting interpretation",
+        name  = sys.name,
+        cls   = star.spectral_class.display(),
+        temp  = star.temperature_k,
+        lum   = star.luminosity,
+        mass  = star.mass,
+        age   = star.age_gyr,
+        hz_i  = hz_inner,
+        hz_o  = hz_outer,
+        npl   = sys.planets.len(),
+        loc   = location,
+        prop  = proper_yr,
+        coord = coord_yr,
+        vel   = gs.ship.max_velocity_c,
+        dist  = dist_sol,
+        cat_note = catalog_note,
+    )
+}
+
+/// Word-wrap `text` to `width` columns, indenting each line with two spaces.
+fn wrap_text(text: &str, width: usize) -> String {
+    let mut out = String::new();
+    for paragraph in text.split('\n') {
+        if paragraph.trim().is_empty() {
+            out.push('\n');
+            continue;
+        }
+        let mut line = String::new();
+        let mut len = 0usize;
+        for word in paragraph.split_whitespace() {
+            if len > 0 && len + 1 + word.len() > width {
+                out.push_str("  ");
+                out.push_str(&line);
+                out.push('\n');
+                line.clear();
+                len = 0;
+            }
+            if len > 0 { line.push(' '); len += 1; }
+            line.push_str(word);
+            len += word.len();
+        }
+        if !line.is_empty() {
+            out.push_str("  ");
+            out.push_str(&line);
+            out.push('\n');
+        }
+    }
+    out
+}
+
+fn aria_chat(gs: &mut GameState) {
+    clear();
+    print_header("ARIA — Astrophysical Research & Intelligence Assistant");
+
+    if std::env::var("ANTHROPIC_API_KEY").is_err() {
+        println!("  ARIA is offline.");
+        println!();
+        println!("  To enable, set your Anthropic API key:");
+        println!("    export ANTHROPIC_API_KEY=sk-ant-...");
+        println!();
+        println!("  ARIA uses claude-opus-4-6 and is aware of your current");
+        println!("  star system, planet, atmospheric chemistry, and mission state.");
+        pause();
+        return;
+    }
+
+    println!("  System: {}  |  Star: {}",
+        gs.current_system.name,
+        gs.current_system.star.spectral_class.display());
+    println!("  Exchanges in context: {}/20", gs.computer.exchange_count());
+    println!();
+    println!("  Ask anything — physics, chemistry, what you're observing.");
+    println!("  'clear' resets conversation history. 'q' disconnects.");
+    println!();
+
+    loop {
+        let input = prompt("  You  > ");
+
+        if input.is_empty() { continue; }
+
+        match input.to_lowercase().trim() {
+            "q" | "quit" | "exit" | "disconnect" => break,
+            "clear" => {
+                gs.computer.clear_history();
+                println!("  [Conversation history cleared]");
+                println!();
+                continue;
+            }
+            _ => {}
+        }
+
+        let system_prompt = build_aria_system_prompt(gs);
+
+        println!("  ARIA > [...]");
+
+        match gs.computer.ask(&input, &system_prompt) {
+            Ok(response) => {
+                // Erase the "[...]" line
+                print!("\x1B[1A\x1B[2K");
+                println!("  ARIA >");
+                print!("{}", wrap_text(&response, 62));
+            }
+            Err(e) => {
+                print!("\x1B[1A\x1B[2K");
+                println!("  ARIA > [offline: {}]", e);
+            }
+        }
+        println!();
+    }
 }

@@ -10,3 +10,4 @@ crossterm = "0.28"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 noise = "0.9"
+reqwest = { version = "0.12", features = ["blocking"] }

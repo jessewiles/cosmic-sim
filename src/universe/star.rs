@@ -14,6 +14,24 @@ pub enum SpectralClass {
 }
 
 impl SpectralClass {
+    /// Parse the leading character(s) of a spectral type string.
+    pub fn from_spectral_str(s: &str) -> Self {
+        let s = s.trim();
+        if s == "BH" { return SpectralClass::BH; }
+        match s.chars().next() {
+            Some('O') => SpectralClass::O,
+            Some('B') => SpectralClass::B,
+            Some('A') => SpectralClass::A,
+            Some('F') => SpectralClass::F,
+            Some('G') => SpectralClass::G,
+            Some('K') => SpectralClass::K,
+            Some('M') => SpectralClass::M,
+            Some('D') => SpectralClass::WD, // DA, DQ, DZ white dwarfs
+            Some('N') | Some('P') => SpectralClass::NS,
+            _ => SpectralClass::M,
+        }
+    }
+
     pub fn display(&self) -> &'static str {
         match self {
             SpectralClass::O  => "O (blue, ~30 000 K)",
@@ -153,5 +171,18 @@ impl Star {
         let inner = (self.luminosity / 1.1).sqrt();
         let outer = (self.luminosity / 0.53).sqrt();
         (inner, outer)
+    }
+
+    /// Build a Star from a real catalog entry.
+    pub fn from_catalog(entry: &crate::universe::catalog::CatalogStar) -> Self {
+        Star {
+            name:           entry.name.to_string(),
+            spectral_class: SpectralClass::from_spectral_str(entry.spectral),
+            mass:           entry.mass,
+            temperature_k:  entry.temp_k,
+            radius:         entry.radius,
+            luminosity:     entry.luminosity,
+            age_gyr:        entry.age_gyr,
+        }
     }
 }

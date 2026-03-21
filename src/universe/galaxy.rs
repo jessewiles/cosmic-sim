@@ -1,11 +1,12 @@
 use rand::{Rng, SeedableRng};
 use rand::rngs::SmallRng;
 use crate::universe::system::StarSystem;
+use crate::universe::catalog;
 
 pub struct Galaxy {
     pub name: String,
     pub seed: u64,
-    /// Discovered/visited systems
+    /// Cache of discovered systems (catalog + procedural)
     pub known_systems: Vec<StarSystem>,
 }
 
@@ -14,35 +15,65 @@ impl Galaxy {
         Galaxy { name, seed, known_systems: vec![] }
     }
 
-    /// Generate or retrieve a system at grid coordinates (x, y, z) in light-years.
-    /// The seed is derived deterministically so the same coordinates always
-    /// produce the same system.
-    pub fn system_at(&mut self, x: i32, y: i32, z: i32) -> StarSystem {
-        // Check cache
-        if let Some(s) = self.known_systems.iter().find(|s| {
-            s.galactic_x as i32 == x && s.galactic_y as i32 == y && s.galactic_z as i32 == z
-        }) {
-            return s.clone();
+    /// Return the star system at the given position (light-years from Sol).
+    /// Checks the real star catalog first (within 0.4 ly = "inside a system"),
+    /// then falls back to deterministic procedural generation.
+    pub fn system_at(&mut self, x: f64, y: f64, z: f64) -> StarSystem {
+        // Check cache by name proximity
+        // (float coords can drift, so match on nearest cached within 0.1 ly)
+        for s in &self.known_systems {
+            let dx = s.galactic_x - x;
+            let dy = s.galactic_y - y;
+            let dz = s.galactic_z - z;
+            if (dx*dx + dy*dy + dz*dz).sqrt() < 0.1 {
+                return s.clone();
+            }
         }
 
-        let coord_seed = self.seed
-            .wrapping_add((x as u64).wrapping_mul(0x9e3779b97f4a7c15))
-            .wrapping_add((y as u64).wrapping_mul(0x6c62272e07bb0142))
-            .wrapping_add((z as u64).wrapping_mul(0xd2a98b26625eee7b));
+        let system = if let Some((entry, _)) = catalog::nearest_within(x, y, z, 0.4) {
+            StarSystem::from_catalog(entry)
+        } else {
+            self.procedural_system(x, y, z)
+        };
 
-        let mut rng = SmallRng::seed_from_u64(coord_seed);
-        let system_name = Self::random_name(&mut rng);
-        let system = StarSystem::generate(
-            system_name,
-            coord_seed,
-            x as f64, y as f64, z as f64,
-        );
         self.known_systems.push(system.clone());
         system
     }
 
+    /// Look up a system by exact catalog name (case-insensitive).
+    pub fn system_by_name(&mut self, name: &str) -> Option<StarSystem> {
+        let entry = catalog::find_by_name(name)?;
+        let sys = self.system_at(entry.x_ly, entry.y_ly, entry.z_ly);
+        Some(sys)
+    }
+
+    /// List up to `n` nearest catalog stars to the given position.
+    pub fn nearest_catalog_stars(x: f64, y: f64, z: f64, radius: f64)
+        -> Vec<(&'static catalog::CatalogStar, f64)>
+    {
+        catalog::stars_within(x, y, z, radius)
+    }
+
+    // ── Procedural fallback ──────────────────────────────────────────────────
+
+    fn procedural_system(&self, x: f64, y: f64, z: f64) -> StarSystem {
+        // Round coords to nearest 0.5 ly grid for stable seeds
+        let gx = (x * 2.0).round() / 2.0;
+        let gy = (y * 2.0).round() / 2.0;
+        let gz = (z * 2.0).round() / 2.0;
+
+        let coord_seed = self.seed
+            .wrapping_add(gx.to_bits().wrapping_mul(0x9e3779b97f4a7c15))
+            .wrapping_add(gy.to_bits().wrapping_mul(0x6c62272e07bb0142))
+            .wrapping_add(gz.to_bits().wrapping_mul(0xd2a98b26625eee7b));
+
+        let mut rng = SmallRng::seed_from_u64(coord_seed);
+        let name = Self::random_name(&mut rng);
+        StarSystem::generate(name, coord_seed, gx, gy, gz)
+    }
+
     fn random_name<R: Rng>(rng: &mut R) -> String {
-        let prefixes = ["Kep", "Sol", "Ari", "Tau", "Vel", "Cen", "Lyr", "Cyg",
+        let prefixes = ["Kep", "Ari", "Tau", "Vel", "Cen", "Lyr", "Cyg",
                         "Her", "Aqu", "Per", "Ori", "Gem", "Leo", "Vir", "Sco"];
         let suffixes = ["ara", "ion", "eon", "ius", "an", "is", "os", "us",
                         "ix", "ax", "id", "ux", "el", "al", "on", "en"];
