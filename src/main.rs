@@ -424,6 +424,7 @@ fn land_menu(gs: &mut GameState) {
 }
 
 fn inspect_planet(gs: &mut GameState, idx: usize) {
+    gs.player.landed_on = Some(idx);
     loop {
     let planet = gs.current_system.planets[idx].clone();
     let star_mass = gs.current_system.star.mass;
@@ -465,6 +466,7 @@ fn inspect_planet(gs: &mut GameState, idx: usize) {
     if universal(&choice, gs, HELP_PLANET) { continue; }
     break;
     } // end loop
+    gs.player.landed_on = None;
 }
 
 fn travel_menu(gs: &mut GameState) {
@@ -872,25 +874,42 @@ fn build_aria_system_prompt(gs: &GameState) -> String {
     let location = if let Some(idx) = gs.player.landed_on {
         if idx < sys.planets.len() {
             let p = &sys.planets[idx];
+            let in_hz = p.is_in_habitable_zone(hz_inner, hz_outer);
+
             let atm_desc = if p.atmosphere.pressure_bar == 0.0 {
-                "no atmosphere".to_string()
+                "  Atmosphere  : none\n".to_string()
             } else {
-                let top = p.atmosphere.components.iter()
-                    .max_by(|a, b| a.fraction.partial_cmp(&b.fraction).unwrap())
-                    .map(|c| format!("{} ({:.0}%)", c.name, c.fraction * 100.0))
-                    .unwrap_or_default();
-                format!("{:.3} bar, dominant: {}, breathable: {}",
-                    p.atmosphere.pressure_bar, top,
-                    if p.atmosphere.is_breathable() { "yes" } else { "no" })
+                let mut comps = p.atmosphere.components.clone();
+                comps.sort_by(|a, b| b.fraction.partial_cmp(&a.fraction).unwrap());
+                let comp_str = comps.iter()
+                    .map(|c| format!("{} {:.1}%", c.symbol, c.fraction * 100.0))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                format!(
+                    "  Atmosphere   : {:.3} bar | {} | breathable: {}\n",
+                    p.atmosphere.pressure_bar, comp_str,
+                    if p.atmosphere.is_breathable() { "YES" } else { "no" }
+                )
             };
+
             format!(
-                "Landed on {} — {} class, {:.0} K ({:.0}°C), gravity {:.2}g, \
-                 escape velocity {:.2} km/s. Atmosphere: {}.",
-                p.name, p.planet_type.display(),
+                "Surveying planet {} (planet {} of {})\n\
+                   Type         : {}\n\
+                   Orbit        : {:.3} AU{}\n\
+                   Mass         : {:.3} M⊕   Radius: {:.3} R⊕\n\
+                   Surface temp : {:.0} K ({:.0}°C)\n\
+                   Gravity      : {:.2}g   Escape velocity: {:.2} km/s\n\
+                 {}",
+                p.name,
+                idx + 1, sys.planets.len(),
+                p.planet_type.display(),
+                p.orbit_au,
+                if in_hz { " (habitable zone)" } else { "" },
+                p.mass_earth, p.radius_earth,
                 p.surface_temp_k, p.surface_temp_k - 273.15,
                 p.surface_gravity_ms2() / 9.807,
                 p.escape_velocity_ms() / 1000.0,
-                atm_desc
+                atm_desc,
             )
         } else {
             format!("In space within the {} system.", sys.name)
