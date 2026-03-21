@@ -205,6 +205,94 @@ fn save_game(gs: &GameState) {
     }
 }
 
+/// Handle commands available everywhere: [?] context help, [a] ARIA.
+/// Returns true if the input was consumed so the caller can `continue`.
+fn universal(choice: &str, gs: &mut GameState, help: &str) -> bool {
+    match choice.trim() {
+        "?" | "h" | "H" => {
+            println!();
+            println!("{}", help);
+            pause();
+            true
+        }
+        "a" | "A" => {
+            aria_chat(gs);
+            true
+        }
+        _ => false,
+    }
+}
+
+// Help text for each screen — concise, no deep explanations (that's ARIA's job).
+const HELP_MAIN: &str = "\
+  MAIN MENU\n\
+  1  Scan the current star system — star data, planets, habitable zone.\n\
+  2  Land on a planet — surface details, atmosphere, gravity.\n\
+  3  Travel — jump to another system by name or coordinates.\n\
+  4  Star chart — your visited systems and the nearest catalog stars.\n\
+  5  Ship & inventory — fuel, hull, cargo.\n\
+  6  Periodic table — look up any element by symbol or atomic number.\n\
+  7  Physics reference — time dilation calculator, Schwarzschild radius.\n\
+  8  ARIA — ask your ship's AI anything about what you're seeing.\n\
+  s  Save your game.  q  Quit (offers to save first).\n\
+  ?  Show this help.  a  Open ARIA from anywhere.";
+
+const HELP_SCAN: &str = "\
+  SYSTEM SCAN\n\
+  Displays full stellar data: mass, temperature, luminosity, age,\n\
+  habitable zone (inner/outer AU), and Schwarzschild radius.\n\
+  Each planet is listed with orbit, type, mass, temperature, and\n\
+  whether it falls inside the habitable zone (✓).\n\
+  Press any key to return.  [a] Ask ARIA about this system.";
+
+const HELP_LAND: &str = "\
+  LANDING\n\
+  Choose a planet by number to see its full surface report:\n\
+  gravity, escape velocity, orbital period, atmosphere composition.\n\
+  Breathable atmospheres are flagged — unprotected EVA is possible.\n\
+  0  Cancel.  [a] Ask ARIA about a planet.";
+
+const HELP_PLANET: &str = "\
+  PLANET DETAIL\n\
+  Full physical breakdown of the selected world.\n\
+  Atmosphere bar chart shows fractional composition by component.\n\
+  Orbital period and velocity are computed from Kepler's third law.\n\
+  Press any key to return.  [a] Ask ARIA about this planet.";
+
+const HELP_TRAVEL: &str = "\
+  INTERSTELLAR TRAVEL\n\
+  Real Universe mode: enter a star name or X Y Z coordinates in ly.\n\
+  Procedural mode: enter X Y Z coordinates only.\n\
+  Travel time is computed relativistically — proper time (what YOU age)\n\
+  is shorter than coordinate time (galaxy frame) at high velocity.\n\
+  Fuel cost = 5 units per light-year.  [a] Ask ARIA about relativity.";
+
+const HELP_CHART: &str = "\
+  STAR CHART\n\
+  Lists every system you have visited with distance and catalog data.\n\
+  1  Nearest 20 catalog stars from your current position.\n\
+  2  All catalog stars that have known exoplanets.\n\
+  q  Return to main menu.  [a] Ask ARIA about any star.";
+
+const HELP_SHIP: &str = "\
+  SHIP & INVENTORY\n\
+  Shows your vessel's current fuel, hull integrity, and cargo.\n\
+  Fuel is consumed by travel (5 units/ly).  Hull degrades over time.\n\
+  Press any key to return.  [a] Ask ARIA about your ship's systems.";
+
+const HELP_ELEMENTS: &str = "\
+  PERIODIC TABLE\n\
+  Enter an element symbol (e.g. Fe, Au, H) or atomic number (e.g. 26).\n\
+  'all' lists all 118 elements in a compact table.\n\
+  q  Return.  [a] Ask ARIA about an element's astrophysical role.";
+
+const HELP_PHYSICS: &str = "\
+  PHYSICS REFERENCE\n\
+  1  Time dilation — compute γ and proper time for any velocity.\n\
+  2  Schwarzschild radius — event horizon for any mass.\n\
+  3  Your relativistic status — how much time you have gained so far.\n\
+  q  Return.  [a] Ask ARIA to explain any of these concepts.";
+
 fn game_loop(gs: &mut GameState) {
     loop {
         clear();
@@ -230,9 +318,10 @@ fn game_loop(gs: &mut GameState) {
         println!("  [7] Physics reference");
         println!("  [8] Consult ARIA (ship's AI)");
         println!("  [s] Save game");
-        println!("  [q] Quit");
+        println!("  [q] Quit  [?] Help  [a] ARIA");
 
         let choice = prompt("\n  > ");
+        if universal(&choice, gs, HELP_MAIN) { continue; }
 
         match choice.as_str() {
             "1" => scan_system(gs),
@@ -240,7 +329,7 @@ fn game_loop(gs: &mut GameState) {
             "3" => travel_menu(gs),
             "4" => star_chart(gs),
             "5" => ship_status(gs),
-            "6" => periodic_table_menu(),
+            "6" => periodic_table_menu(gs),
             "7" => physics_menu(gs),
             "8" => aria_chat(gs),
             "s" | "S" => save_game(gs),
@@ -261,6 +350,7 @@ fn game_loop(gs: &mut GameState) {
 }
 
 fn scan_system(gs: &mut GameState) {
+    loop {
     clear();
     print_header(&format!("SCAN — {}", gs.current_system.name));
 
@@ -295,7 +385,12 @@ fn scan_system(gs: &mut GameState) {
         }
     }
 
-    pause();
+    println!();
+    println!("  [?] Help  [a] ARIA  [q] Back");
+    let choice = prompt("\n  > ");
+    if universal(&choice, gs, HELP_SCAN) { continue; }
+    break;
+    } // end loop
 }
 
 fn land_menu(gs: &mut GameState) {
@@ -306,22 +401,28 @@ fn land_menu(gs: &mut GameState) {
         return;
     }
 
+    loop {
     clear();
     print_header("LAND ON PLANET");
     for (i, p) in gs.current_system.planets.iter().enumerate() {
         println!("  [{}] {} — {} @ {:.2} AU — {:.0} K", i + 1, p.name, p.planet_type.display(), p.orbit_au, p.surface_temp_k);
     }
-    println!("  [0] Cancel");
+    println!("  [0] Cancel  [?] Help  [a] ARIA");
 
     let choice = prompt("\n  > ");
+    if universal(&choice, gs, HELP_LAND) { continue; }
     if let Ok(n) = choice.parse::<usize>() {
-        if n > 0 && n <= gs.current_system.planets.len() {
+        if n == 0 { break; }
+        if n <= gs.current_system.planets.len() {
             inspect_planet(gs, n - 1);
         }
     }
+    break;
+    } // end loop
 }
 
 fn inspect_planet(gs: &mut GameState, idx: usize) {
+    loop {
     let planet = gs.current_system.planets[idx].clone();
     let star_mass = gs.current_system.star.mass;
 
@@ -356,10 +457,16 @@ fn inspect_planet(gs: &mut GameState, idx: usize) {
         }
     }
 
-    pause();
+    println!();
+    println!("  [?] Help  [a] ARIA  [q] Back");
+    let choice = prompt("\n  > ");
+    if universal(&choice, gs, HELP_PLANET) { continue; }
+    break;
+    } // end loop
 }
 
 fn travel_menu(gs: &mut GameState) {
+    loop {
     clear();
     print_header("INTERSTELLAR TRAVEL");
 
@@ -383,13 +490,14 @@ fn travel_menu(gs: &mut GameState) {
             println!();
         }
         println!("  Enter a star name (e.g. \"Alpha Centauri A\", \"TRAPPIST-1\")");
-        println!("  or coordinates in ly (e.g. \"4.2 -1.5 0\").  Enter to cancel.");
+        println!("  or coordinates in ly (e.g. \"4.2 -1.5 0\").  [?] Help  [a] ARIA  Enter to cancel.");
     } else {
-        println!("  Enter coordinates in ly (e.g. \"4.2 -1.5 0\").  Enter to cancel.");
+        println!("  Enter coordinates in ly (e.g. \"4.2 -1.5 0\").  [?] Help  [a] ARIA  Enter to cancel.");
     }
 
     let input = prompt("\n  > ");
-    if input.is_empty() { return; }
+    if universal(&input, gs, HELP_TRAVEL) { continue; }
+    if input.trim().is_empty() { return; }
 
     // Try name lookup first (real universe only), then coordinate parse
     let dest: [f64; 3] = if gs.galaxy.mode == GalaxyMode::RealUniverse {
@@ -469,6 +577,8 @@ fn travel_menu(gs: &mut GameState) {
 
     println!("\n  Arrived at {}.", name);
     pause();
+    break;
+    } // end loop
 }
 
 fn star_chart(gs: &mut GameState) {
@@ -507,8 +617,9 @@ fn star_chart(gs: &mut GameState) {
 
         println!();
         print_section("CATALOG SEARCH");
-        println!("  [1] Show nearest 20 stars  [2] Show all stars with known planets  [q] Back");
+        println!("  [1] Nearest 20 stars  [2] Stars with known planets  [q] Back  [?] Help  [a] ARIA");
         let choice = prompt("\n  > ");
+        if universal(&choice, gs, HELP_CHART) { continue; }
         match choice.as_str() {
             "1" => {
                 clear();
@@ -554,6 +665,7 @@ fn dist3(ax: f64, ay: f64, az: f64, bx: f64, by: f64, bz: f64) -> f64 {
 }
 
 fn ship_status(gs: &mut GameState) {
+    loop {
     clear();
     print_header("SHIP & INVENTORY");
 
@@ -573,17 +685,24 @@ fn ship_status(gs: &mut GameState) {
             println!("  {:>4}  {:.2} g", sym, mass);
         }
     }
-    pause();
+
+    println!();
+    println!("  [?] Help  [a] ARIA  [q] Back");
+    let choice = prompt("\n  > ");
+    if universal(&choice, gs, HELP_SHIP) { continue; }
+    break;
+    } // end loop
 }
 
-fn periodic_table_menu() {
+fn periodic_table_menu(gs: &mut GameState) {
     loop {
         clear();
         print_header("PERIODIC TABLE REFERENCE");
         println!("  Enter an element symbol (e.g. \"Fe\", \"Au\", \"H\") or atomic number (e.g. \"26\"),");
-        println!("  'all' to list all elements, or 'q' to return.");
+        println!("  'all' to list all elements, or 'q' to return.  [?] Help  [a] ARIA");
 
         let input = prompt("\n  > ");
+        if universal(&input, gs, HELP_ELEMENTS) { continue; }
 
         match input.to_lowercase().as_str() {
             "q" => break,
@@ -642,16 +761,17 @@ fn periodic_table_menu() {
     }
 }
 
-fn physics_menu(gs: &GameState) {
+fn physics_menu(gs: &mut GameState) {
     loop {
         clear();
         print_header("PHYSICS REFERENCE");
         println!("  [1] Time dilation calculator");
         println!("  [2] Schwarzschild radius calculator");
         println!("  [3] Your relativistic status");
-        println!("  [q] Back");
+        println!("  [q] Back  [?] Help  [a] ARIA");
 
         let choice = prompt("\n  > ");
+        if universal(&choice, gs, HELP_PHYSICS) { continue; }
         match choice.as_str() {
             "1" => time_dilation_calc(),
             "2" => schwarzschild_calc(),
