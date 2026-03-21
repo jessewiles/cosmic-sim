@@ -1017,18 +1017,40 @@ fn aria_chat(gs: &mut GameState) {
 
         let system_prompt = build_aria_system_prompt(gs);
 
-        println!("  ARIA > [...]");
+        print!("  ARIA >\n");
+        {
+            use std::io::{stdout, Write};
+            stdout().flush().ok();
+        }
 
-        match gs.computer.ask(&input, &system_prompt) {
-            Ok(response) => {
-                // Erase the "[...]" line
-                print!("\x1B[1A\x1B[2K");
-                println!("  ARIA >");
-                print!("{}", wrap_text(&response, 62));
+        // Save the row where streamed content will begin
+        let start_row = crossterm::cursor::position().ok().map(|(_, r)| r);
+
+        let result = {
+            use std::io::{stdout, Write};
+            gs.computer.ask_streaming(&input, &system_prompt, |chunk| {
+                print!("{}", chunk);
+                stdout().flush().ok();
+            })
+        };
+
+        // Move back to start_row, clear streamed text, re-render with termimad
+        if let Some(row) = start_row {
+            use crossterm::{execute, cursor, terminal};
+            use std::io::stdout;
+            execute!(
+                stdout(),
+                cursor::MoveTo(0, row),
+                terminal::Clear(terminal::ClearType::FromCursorDown)
+            ).ok();
+        }
+
+        match result {
+            Ok(full_text) => {
+                termimad::print_text(&full_text);
             }
             Err(e) => {
-                print!("\x1B[1A\x1B[2K");
-                println!("  ARIA > [offline: {}]", e);
+                println!("  [offline: {}]", e);
             }
         }
         println!();

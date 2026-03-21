@@ -20,6 +20,7 @@ struct ApiRequest {
     max_tokens: u32,
     system: String,
     messages: Vec<Message>,
+    stream: bool,
 }
 
 #[derive(Deserialize)]
@@ -72,6 +73,7 @@ impl ShipComputer {
             max_tokens: 1024,
             system: system_prompt.to_string(),
             messages: self.history.clone(),
+            stream: false,
         };
 
         let body = serde_json::to_string(&request_body)
@@ -114,6 +116,90 @@ impl ShipComputer {
         });
 
         Ok(content)
+    }
+
+    /// Send a message with streaming. Calls `on_delta` for each text chunk as
+    /// it arrives. Returns the complete response text when done.
+    pub fn ask_streaming<F>(
+        &mut self,
+        user_message: &str,
+        system_prompt: &str,
+        mut on_delta: F,
+    ) -> Result<String, String>
+    where
+        F: FnMut(&str),
+    {
+        use std::io::{BufRead, BufReader};
+
+        let api_key = env::var("ANTHROPIC_API_KEY")
+            .map_err(|_| "ANTHROPIC_API_KEY is not set".to_string())?;
+
+        self.history.push(Message {
+            role: "user".to_string(),
+            content: user_message.to_string(),
+        });
+
+        let max_msgs = MAX_EXCHANGES * 2;
+        if self.history.len() > max_msgs {
+            self.history.drain(..self.history.len() - max_msgs);
+        }
+
+        let request_body = ApiRequest {
+            model: "claude-opus-4-6",
+            max_tokens: 1024,
+            system: system_prompt.to_string(),
+            messages: self.history.clone(),
+            stream: true,
+        };
+
+        let body = serde_json::to_string(&request_body)
+            .map_err(|e| format!("Serialization error: {}", e))?;
+
+        let response = self.client
+            .post("https://api.anthropic.com/v1/messages")
+            .header("x-api-key", &api_key)
+            .header("anthropic-version", "2023-06-01")
+            .header("content-type", "application/json")
+            .body(body)
+            .send()
+            .map_err(|e| format!("Network error: {}", e))?;
+
+        let status = response.status();
+        if !status.is_success() {
+            let text = response.text().unwrap_or_default();
+            let msg = serde_json::from_str::<serde_json::Value>(&text)
+                .ok()
+                .and_then(|v| v["error"]["message"].as_str().map(|s| s.to_string()))
+                .unwrap_or_else(|| format!("HTTP {}", status));
+            self.history.pop();
+            return Err(msg);
+        }
+
+        let mut full_text = String::new();
+        let reader = BufReader::new(response);
+
+        for line in reader.lines() {
+            let line = line.map_err(|e| format!("Stream read error: {}", e))?;
+
+            let Some(data) = line.strip_prefix("data: ") else { continue };
+            if data == "[DONE]" { break; }
+
+            let Ok(val) = serde_json::from_str::<serde_json::Value>(data) else { continue };
+
+            if val["type"] == "content_block_delta" && val["delta"]["type"] == "text_delta" {
+                if let Some(chunk) = val["delta"]["text"].as_str() {
+                    full_text.push_str(chunk);
+                    on_delta(chunk);
+                }
+            }
+        }
+
+        self.history.push(Message {
+            role: "assistant".to_string(),
+            content: full_text.clone(),
+        });
+
+        Ok(full_text)
     }
 
     pub fn clear_history(&mut self) {
