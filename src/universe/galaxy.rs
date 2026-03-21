@@ -3,20 +3,29 @@ use rand::rngs::SmallRng;
 use crate::universe::system::StarSystem;
 use crate::universe::catalog;
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum GalaxyMode {
+    /// Real star catalog + known exoplanets, procedural fallback for deep space.
+    RealUniverse,
+    /// Fully deterministic procedural generation — no catalog data.
+    Procedural,
+}
+
 pub struct Galaxy {
     pub name: String,
     pub seed: u64,
+    pub mode: GalaxyMode,
     /// Cache of discovered systems (catalog + procedural)
     pub known_systems: Vec<StarSystem>,
 }
 
 impl Galaxy {
-    pub fn new(name: String, seed: u64) -> Self {
-        Galaxy { name, seed, known_systems: vec![] }
+    pub fn new(name: String, seed: u64, mode: GalaxyMode) -> Self {
+        Galaxy { name, seed, mode, known_systems: vec![] }
     }
 
     /// Return the star system at the given position (light-years from Sol).
-    /// Checks the real star catalog first (within 0.4 ly = "inside a system"),
+    /// In RealUniverse mode, checks the real star catalog first (within 0.4 ly),
     /// then falls back to deterministic procedural generation.
     pub fn system_at(&mut self, x: f64, y: f64, z: f64) -> StarSystem {
         // Check cache by name proximity
@@ -30,10 +39,15 @@ impl Galaxy {
             }
         }
 
-        let system = if let Some((entry, _)) = catalog::nearest_within(x, y, z, 0.4) {
-            StarSystem::from_catalog(entry)
-        } else {
-            self.procedural_system(x, y, z)
+        let system = match self.mode {
+            GalaxyMode::RealUniverse => {
+                if let Some((entry, _)) = catalog::nearest_within(x, y, z, 0.4) {
+                    StarSystem::from_catalog(entry)
+                } else {
+                    self.procedural_system(x, y, z)
+                }
+            }
+            GalaxyMode::Procedural => self.procedural_system(x, y, z),
         };
 
         self.known_systems.push(system.clone());
@@ -41,7 +55,9 @@ impl Galaxy {
     }
 
     /// Look up a system by exact catalog name (case-insensitive).
+    /// Returns None in Procedural mode (no catalog).
     pub fn system_by_name(&mut self, name: &str) -> Option<StarSystem> {
+        if self.mode == GalaxyMode::Procedural { return None; }
         let entry = catalog::find_by_name(name)?;
         let sys = self.system_at(entry.x_ly, entry.y_ly, entry.z_ly);
         Some(sys)

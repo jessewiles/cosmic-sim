@@ -6,7 +6,7 @@ mod player;
 mod ui;
 mod ai;
 
-use universe::galaxy::Galaxy;
+use universe::galaxy::{Galaxy, GalaxyMode};
 use universe::system::StarSystem;
 use universe::planet::Planet;
 use universe::catalog;
@@ -30,8 +30,8 @@ struct GameState {
 }
 
 impl GameState {
-    fn new(player_name: String) -> Self {
-        let mut galaxy = Galaxy::new("The Milky Way".to_string(), 0xDEADBEEF_C0FFEE);
+    fn new(player_name: String, mode: GalaxyMode) -> Self {
+        let mut galaxy = Galaxy::new("The Milky Way".to_string(), 0xDEADBEEF_C0FFEE, mode);
         let current_system = galaxy.system_at(0.0, 0.0, 0.0);
         GameState {
             player: PlayerState::new(player_name),
@@ -53,13 +53,34 @@ fn main() {
     println!("  Learn. Discover. Survive.");
     println!();
 
+    // ── Universe mode selection ──────────────────────────────────────────────
+    println!("  Choose your universe:");
+    println!();
+    println!("  [1] Real Universe — real star catalog, known exoplanets, real solar system");
+    println!("      Navigate to Alpha Centauri, TRAPPIST-1, Betelgeuse, and more.");
+    println!();
+    println!("  [2] Procedural Universe — infinite, fully generated galaxy");
+    println!("      Every system is unique, seeded by coordinates.");
+    println!();
+
+    let mode = loop {
+        let choice = prompt("  Your choice [1/2]: ");
+        match choice.trim() {
+            "1" => break GalaxyMode::RealUniverse,
+            "2" => break GalaxyMode::Procedural,
+            _ => println!("  Please enter 1 or 2."),
+        }
+    };
+    println!();
+
+    // ── Explorer name ────────────────────────────────────────────────────────
     let name = prompt("  Enter your name, explorer: ");
     if name.is_empty() {
         println!("  Coward. Goodbye.");
         return;
     }
 
-    let mut gs = GameState::new(name.clone());
+    let mut gs = GameState::new(name.clone(), mode);
 
     println!();
     println!("  Greetings, {}. Your ship — {} — is fuelled and ready.", name, gs.ship.name);
@@ -226,36 +247,50 @@ fn travel_menu(gs: &mut GameState) {
     println!("  Ship max velocity: {:.2}c", gs.ship.max_velocity_c);
     println!();
 
-    // Show nearby catalog stars
-    let nearby = Galaxy::nearest_catalog_stars(px, py, pz, 30.0);
-    if !nearby.is_empty() {
-        println!("  Nearby systems (within 30 ly):");
-        println!("  {:>22}  {:>8}  {:>8}  {}", "Name", "Dist (ly)", "Class", "Notes");
-        println!("  {}", separator());
-        for (entry, dist) in nearby.iter().take(12) {
-            let note_preview = entry.notes.split('.').next().unwrap_or("").trim();
-            println!("  {:>22}  {:>8.2}  {:>8}  {}",
-                entry.name, dist, entry.spectral, note_preview);
+    // Show nearby catalog stars (real universe mode only)
+    if gs.galaxy.mode == GalaxyMode::RealUniverse {
+        let nearby = Galaxy::nearest_catalog_stars(px, py, pz, 30.0);
+        if !nearby.is_empty() {
+            println!("  Nearby systems (within 30 ly):");
+            println!("  {:>22}  {:>8}  {:>8}  {}", "Name", "Dist (ly)", "Class", "Notes");
+            println!("  {}", separator());
+            for (entry, dist) in nearby.iter().take(12) {
+                let note_preview = entry.notes.split('.').next().unwrap_or("").trim();
+                println!("  {:>22}  {:>8.2}  {:>8}  {}",
+                    entry.name, dist, entry.spectral, note_preview);
+            }
+            println!();
         }
-        println!();
+        println!("  Enter a star name (e.g. \"Alpha Centauri A\", \"TRAPPIST-1\")");
+        println!("  or coordinates in ly (e.g. \"4.2 -1.5 0\").  Enter to cancel.");
+    } else {
+        println!("  Enter coordinates in ly (e.g. \"4.2 -1.5 0\").  Enter to cancel.");
     }
-
-    println!("  Enter a star name (e.g. \"Alpha Centauri A\", \"TRAPPIST-1\")");
-    println!("  or coordinates in ly (e.g. \"4.2 -1.5 0\").  Enter to cancel.");
 
     let input = prompt("\n  > ");
     if input.is_empty() { return; }
 
-    // Try name lookup first
-    let dest: [f64; 3] = if let Some(entry) = catalog::find_by_name(input.trim()) {
-        [entry.x_ly, entry.y_ly, entry.z_ly]
+    // Try name lookup first (real universe only), then coordinate parse
+    let dest: [f64; 3] = if gs.galaxy.mode == GalaxyMode::RealUniverse {
+        if let Some(entry) = catalog::find_by_name(input.trim()) {
+            [entry.x_ly, entry.y_ly, entry.z_ly]
+        } else {
+            let parts: Vec<f64> = input.split_whitespace()
+                .filter_map(|s| s.parse().ok())
+                .collect();
+            if parts.len() != 3 {
+                println!("  Unknown star name and invalid coordinates.");
+                pause();
+                return;
+            }
+            [parts[0], parts[1], parts[2]]
+        }
     } else {
-        // Fall back to coordinate parse
         let parts: Vec<f64> = input.split_whitespace()
             .filter_map(|s| s.parse().ok())
             .collect();
         if parts.len() != 3 {
-            println!("  Unknown star name and invalid coordinates.");
+            println!("  Invalid coordinates. Enter three numbers, e.g. \"4.2 -1.5 0\".");
             pause();
             return;
         }
