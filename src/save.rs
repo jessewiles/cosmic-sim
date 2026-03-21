@@ -12,17 +12,17 @@ use crate::universe::system::StarSystem;
 
 // ── Paths ────────────────────────────────────────────────────────────────────
 
-pub fn cosmos_dir() -> PathBuf {
+pub fn data_dir() -> PathBuf {
     let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
-    PathBuf::from(home).join(".cosmos")
+    PathBuf::from(home).join(".cosmic-sim")
 }
 
 fn saves_dir() -> PathBuf {
-    cosmos_dir().join("saves")
+    data_dir().join("saves")
 }
 
 pub fn api_key_path() -> PathBuf {
-    cosmos_dir().join("api_key")
+    data_dir().join("api_key")
 }
 
 fn ensure_dirs() -> io::Result<()> {

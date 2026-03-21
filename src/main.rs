@@ -110,7 +110,7 @@ fn ensure_api_key() {
     // SAFETY: single-threaded startup, no other threads reading env yet.
     unsafe { std::env::set_var("ANTHROPIC_API_KEY", &key); }
 
-    let save_it = prompt("  Save key to ~/.cosmos/api_key for future sessions? [Y/n] ");
+    let save_it = prompt("  Save key to ~/.cosmic-sim/api_key for future sessions? [Y/n] ");
     if !save_it.trim().eq_ignore_ascii_case("n") {
         match save::store_api_key(&key) {
             Ok(_)  => println!("  Key saved."),
