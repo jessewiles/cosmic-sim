@@ -297,7 +297,7 @@ fn game_loop(gs: &mut GameState) {
     loop {
         clear();
         let [px, py, pz] = gs.player.position;
-        print_header(&format!("COSMOS  |  {}  |  ({:.2}, {:.2}, {:.2}) ly", gs.player.name, px, py, pz));
+        print_header(&format!("COSMIC SIM  |  {}  |  ({:.2}, {:.2}, {:.2}) ly", gs.player.name, px, py, pz));
 
         println!("  Current system : {}", gs.current_system.name);
         println!("  Star           : {} — {}", gs.current_system.star.name, gs.current_system.star.spectral_class.display());
