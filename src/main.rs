@@ -20,6 +20,7 @@ use chemistry::element::periodic_table;
 use ui::terminal::*;
 use ui::display::separator;
 use ai::computer::ShipComputer;
+use ai::companion::{Companion, default_companions};
 
 struct GameState {
     player: PlayerState,
@@ -28,6 +29,7 @@ struct GameState {
     galaxy: Galaxy,
     current_system: StarSystem,
     computer: ShipComputer,
+    companions: Vec<Companion>,
 }
 
 impl GameState {
@@ -41,6 +43,7 @@ impl GameState {
             galaxy,
             current_system,
             computer: ShipComputer::new(),
+            companions: default_companions(),
         }
     }
 
@@ -52,6 +55,7 @@ impl GameState {
             galaxy: save::galaxy_from_save(s),
             current_system: s.current_system.clone(),
             computer: ShipComputer::new(),
+            companions: default_companions(),
         }
     }
 
@@ -319,6 +323,7 @@ fn game_loop(gs: &mut GameState) {
         println!("  [6] Periodic table reference");
         println!("  [7] Physics reference");
         println!("  [8] Consult ARIA (ship's AI)");
+        println!("  [c] Fleet comms  (Yael · Reza)");
         println!("  [s] Save game");
         println!("  [q] Quit  [?] Help  [a] ARIA");
 
@@ -334,6 +339,7 @@ fn game_loop(gs: &mut GameState) {
             "6" => periodic_table_menu(gs),
             "7" => physics_menu(gs),
             "8" => aria_chat(gs),
+            "c" | "C" => comms_menu(gs),
             "s" | "S" => save_game(gs),
             "q" | "Q" => {
                 let confirm = prompt("\n  Save before quitting? [Y/n] ");
@@ -962,6 +968,169 @@ GUIDELINES:\n\
         dist  = dist_sol,
         cat_note = catalog_note,
     )
+}
+
+/// Build the system prompt for a companion consciousness.
+/// Same situational context as ARIA, filtered through their personality.
+fn build_companion_system_prompt(companion: &Companion, gs: &GameState) -> String {
+    let sys = &gs.current_system;
+    let star = &sys.star;
+    let [px, py, pz] = gs.player.position;
+    let dist_sol = (px*px + py*py + pz*pz).sqrt();
+    let coord_yr = gs.player.coordinate_time_s / 31_557_600.0;
+    let proper_yr = gs.player.proper_time_s / 31_557_600.0;
+
+    let location = if let Some(idx) = gs.player.landed_on {
+        if idx < sys.planets.len() {
+            let p = &sys.planets[idx];
+            format!("Surveying planet {} — {} class, {:.0} K, gravity {:.2}g",
+                p.name, p.planet_type.display(), p.surface_temp_k, p.surface_gravity_ms2() / 9.807)
+        } else {
+            format!("In space within the {} system", sys.name)
+        }
+    } else {
+        format!("In space within the {} system", sys.name)
+    };
+
+    format!(
+        "{personality}\n\n\
+SHARED SITUATION — all three ships are at the same position:\n\
+  Star system   : {name} | {cls} | {temp:.0} K | {lum:.4} L☉\n\
+  Distance Sol  : {dist:.4} ly\n\
+  Location      : {loc}\n\
+  Proper time   : {prop:.2} yr elapsed (your subjective frame)\n\
+  Coord. time   : {coord:.2} yr elapsed (galaxy frame)\n\n\
+The player's ship is Perihelion I. Your ship is {ship}. \
+The third ship is {other_ship}, crewed by {other_name}.",
+        personality  = companion.personality,
+        name   = sys.name,
+        cls    = star.spectral_class.display(),
+        temp   = star.temperature_k,
+        lum    = star.luminosity,
+        dist   = dist_sol,
+        loc    = location,
+        prop   = proper_yr,
+        coord  = coord_yr,
+        ship   = companion.ship_name,
+        other_ship = if companion.ship_name == "Threshold" { "Sable" } else { "Threshold" },
+        other_name = if companion.ship_name == "Threshold" { "Reza Tehrani" } else { "Dr. Yael Orin" },
+    )
+}
+
+fn comms_menu(gs: &mut GameState) {
+    loop {
+        clear();
+        print_header("FLEET COMMS");
+
+        println!("  Fleet position : {}  ({:.2}, {:.2}, {:.2}) ly",
+            gs.current_system.name,
+            gs.player.position[0], gs.player.position[1], gs.player.position[2]);
+        println!("  Coord. time    : {:.2} yr elapsed", gs.player.coordinate_time_s / 31_557_600.0);
+        println!();
+        println!("  Hail which ship?");
+        println!();
+
+        for (i, c) in gs.companions.iter().enumerate() {
+            println!("  [{}] {} — {}  ({})", i + 1, c.name, c.ship_name, c.specialty);
+        }
+
+        println!();
+        println!("  [q] Close channel");
+
+        let choice = prompt("\n  > ");
+        match choice.trim() {
+            "q" | "" => return,
+            s => {
+                if let Ok(n) = s.parse::<usize>() {
+                    if n >= 1 && n <= gs.companions.len() {
+                        companion_chat(gs, n - 1);
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn companion_chat(gs: &mut GameState, idx: usize) {
+    let name  = gs.companions[idx].name;
+    let ship  = gs.companions[idx].ship_name;
+
+    clear();
+    print_header(&format!("COMMS — {} / {}", name, ship));
+
+    if std::env::var("ANTHROPIC_API_KEY").is_err() {
+        println!("  Comms offline — no API key.");
+        pause();
+        return;
+    }
+
+    println!("  {DIM}Hailing {}...{R}", name);
+    println!("  {DIM}Channel open. 'q' to close, 'clear' to reset.{R}");
+    println!();
+
+    loop {
+        let input = prompt(&format!("  {BCYAN}You  {R} {DIM}>{R} "));
+
+        if input.is_empty() { continue; }
+
+        match input.to_lowercase().trim() {
+            "q" | "quit" | "close" | "disconnect" => break,
+            "clear" => {
+                gs.companions[idx].computer.clear_history();
+                println!("  {DIM}[Channel cleared]{R}");
+                println!();
+                continue;
+            }
+            _ => {}
+        }
+
+        let system_prompt = build_companion_system_prompt(&gs.companions[idx], gs);
+
+        print!("  {BMAGENTA}{name}{R} {DIM}>{R}\n");
+        {
+            use std::io::{stdout, Write};
+            stdout().flush().ok();
+        }
+
+        let start_row = crossterm::cursor::position().ok().map(|(_, r)| r);
+
+        let result = {
+            use std::io::{stdout, Write};
+            gs.companions[idx].computer.ask_streaming(&input, &system_prompt, |chunk| {
+                for ch in chunk.chars() {
+                    print!("{}", ch);
+                    stdout().flush().ok();
+                    std::thread::sleep(std::time::Duration::from_millis(12));
+                }
+            })
+        };
+
+        if let Some(row) = start_row {
+            use crossterm::{execute, cursor, terminal};
+            use std::io::stdout;
+            execute!(
+                stdout(),
+                cursor::MoveTo(0, row),
+                terminal::Clear(terminal::ClearType::FromCursorDown)
+            ).ok();
+        }
+
+        match result {
+            Ok(full_text) => {
+                use termimad::crossterm::style::Color as TC;
+                let mut skin = termimad::MadSkin::default();
+                skin.bold.set_fg(TC::Yellow);
+                skin.italic.set_fg(TC::Magenta);
+                for h in &mut skin.headers { h.set_fg(TC::Cyan); }
+                skin.inline_code.set_fg(TC::Green);
+                skin.print_text(&full_text);
+            }
+            Err(e) => {
+                println!("  {BRED}[comms error: {}]{R}", e);
+            }
+        }
+        println!();
+    }
 }
 
 /// Word-wrap `text` to `width` columns, indenting each line with two spaces.
