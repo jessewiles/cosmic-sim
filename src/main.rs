@@ -299,13 +299,15 @@ fn game_loop(gs: &mut GameState) {
         let [px, py, pz] = gs.player.position;
         print_header(&format!("COSMIC SIM  |  {}  |  ({:.2}, {:.2}, {:.2}) ly", gs.player.name, px, py, pz));
 
-        println!("  Current system : {}", gs.current_system.name);
-        println!("  Star           : {} — {}", gs.current_system.star.name, gs.current_system.star.spectral_class.display());
-        println!("  Planets        : {}", gs.current_system.planets.len());
-        println!("  Ship fuel      : {:.1} / {:.1}", gs.ship.fuel, gs.ship.max_fuel);
-        println!("  Ship hull      : {:.0}%", gs.ship.hull * 100.0);
-        println!("  Proper time    : {:.1} years", gs.player.proper_time_s / 31_557_600.0);
-        println!("  Coord. time    : {:.1} years", gs.player.coordinate_time_s / 31_557_600.0);
+        let fuel_col = if gs.ship.fuel / gs.ship.max_fuel > 0.5 { BGREEN } else if gs.ship.fuel / gs.ship.max_fuel > 0.25 { BYELLOW } else { BRED };
+        let hull_col = if gs.ship.hull > 0.5 { BGREEN } else if gs.ship.hull > 0.25 { BYELLOW } else { BRED };
+        println!("  {DIM}Current system :{R} {BCYAN}{}{R}", gs.current_system.name);
+        println!("  {DIM}Star           :{R} {} — {BYELLOW}{}{R}", gs.current_system.star.name, gs.current_system.star.spectral_class.display());
+        println!("  {DIM}Planets        :{R} {BYELLOW}{}{R}", gs.current_system.planets.len());
+        println!("  {DIM}Ship fuel      :{R} {fuel_col}{:.1}{R}{DIM} / {:.1}{R}", gs.ship.fuel, gs.ship.max_fuel);
+        println!("  {DIM}Ship hull      :{R} {hull_col}{:.0}%{R}", gs.ship.hull * 100.0);
+        println!("  {DIM}Proper time    :{R} {BYELLOW}{:.1} years{R}", gs.player.proper_time_s / 31_557_600.0);
+        println!("  {DIM}Coord. time    :{R} {BYELLOW}{:.1} years{R}", gs.player.coordinate_time_s / 31_557_600.0);
 
         println!();
         println!("  What would you like to do?");
@@ -1000,7 +1002,7 @@ fn aria_chat(gs: &mut GameState) {
     println!();
 
     loop {
-        let input = prompt("  You  > ");
+        let input = prompt(&format!("  {BCYAN}You{R}  {DIM}>{R} "));
 
         if input.is_empty() { continue; }
 
@@ -1008,7 +1010,7 @@ fn aria_chat(gs: &mut GameState) {
             "q" | "quit" | "exit" | "disconnect" => break,
             "clear" => {
                 gs.computer.clear_history();
-                println!("  [Conversation history cleared]");
+                println!("  {DIM}[Conversation history cleared]{R}");
                 println!();
                 continue;
             }
@@ -1017,7 +1019,7 @@ fn aria_chat(gs: &mut GameState) {
 
         let system_prompt = build_aria_system_prompt(gs);
 
-        print!("  ARIA >\n");
+        print!("  {BMAGENTA}ARIA{R} {DIM}>{R}\n");
         {
             use std::io::{stdout, Write};
             stdout().flush().ok();
@@ -1029,8 +1031,12 @@ fn aria_chat(gs: &mut GameState) {
         let result = {
             use std::io::{stdout, Write};
             gs.computer.ask_streaming(&input, &system_prompt, |chunk| {
-                print!("{}", chunk);
-                stdout().flush().ok();
+                // Typewriter: output character by character at a consistent pace
+                for ch in chunk.chars() {
+                    print!("{}", ch);
+                    stdout().flush().ok();
+                    std::thread::sleep(std::time::Duration::from_millis(12));
+                }
             })
         };
 
@@ -1047,10 +1053,18 @@ fn aria_chat(gs: &mut GameState) {
 
         match result {
             Ok(full_text) => {
-                termimad::print_text(&full_text);
+                use termimad::crossterm::style::Color as TC;
+                let mut skin = termimad::MadSkin::default();
+                skin.bold.set_fg(TC::Yellow);
+                skin.italic.set_fg(TC::Magenta);
+                for h in &mut skin.headers {
+                    h.set_fg(TC::Cyan);
+                }
+                skin.inline_code.set_fg(TC::Green);
+                skin.print_text(&full_text);
             }
             Err(e) => {
-                println!("  [offline: {}]", e);
+                println!("  {BRED}[offline: {}]{R}", e);
             }
         }
         println!();
