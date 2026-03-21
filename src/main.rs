@@ -5,6 +5,7 @@ mod world;
 mod player;
 mod ui;
 mod ai;
+mod save;
 
 use universe::galaxy::{Galaxy, GalaxyMode};
 use universe::system::StarSystem;
@@ -42,6 +43,28 @@ impl GameState {
             computer: ShipComputer::new(),
         }
     }
+
+    fn from_save(s: &save::SavedGame) -> Self {
+        GameState {
+            player: s.player.clone(),
+            ship: s.ship.clone(),
+            inventory: s.inventory.clone(),
+            galaxy: save::galaxy_from_save(s),
+            current_system: s.current_system.clone(),
+            computer: ShipComputer::new(),
+        }
+    }
+
+    fn to_save(&self) -> save::SavedGame {
+        save::SavedGame::new(
+            self.player.name.clone(),
+            self.player.clone(),
+            self.ship.clone(),
+            self.inventory.clone(),
+            self.galaxy.clone(),
+            self.current_system.clone(),
+        )
+    }
 }
 
 fn main() {
@@ -53,7 +76,92 @@ fn main() {
     println!("  Learn. Discover. Survive.");
     println!();
 
-    // ── Universe mode selection ──────────────────────────────────────────────
+    // ── API key ──────────────────────────────────────────────────────────────
+    ensure_api_key();
+
+    // ── Resume or new game ───────────────────────────────────────────────────
+    let mut gs = match startup_menu() {
+        Some(state) => state,
+        None => return,
+    };
+
+    game_loop(&mut gs);
+}
+
+/// Ensure ANTHROPIC_API_KEY is available: env → stored file → prompt.
+fn ensure_api_key() {
+    if std::env::var("ANTHROPIC_API_KEY").is_ok() { return; }
+
+    // Try stored key
+    if let Some(key) = save::load_api_key() {
+        // SAFETY: single-threaded startup, no other threads reading env yet.
+        unsafe { std::env::set_var("ANTHROPIC_API_KEY", &key); }
+        return;
+    }
+
+    // Prompt
+    println!("  ARIA (ship's AI) requires an Anthropic API key.");
+    println!("  Leave blank to skip — ARIA will be offline.");
+    println!();
+    let key = prompt("  Anthropic API key: ");
+    let key = key.trim().to_string();
+    if key.is_empty() { return; }
+
+    // SAFETY: single-threaded startup, no other threads reading env yet.
+    unsafe { std::env::set_var("ANTHROPIC_API_KEY", &key); }
+
+    let save_it = prompt("  Save key to ~/.cosmos/api_key for future sessions? [Y/n] ");
+    if !save_it.trim().eq_ignore_ascii_case("n") {
+        match save::store_api_key(&key) {
+            Ok(_)  => println!("  Key saved."),
+            Err(e) => println!("  Could not save key: {}", e),
+        }
+    }
+    println!();
+}
+
+/// Show the startup menu: resume a save or start a new game.
+/// Returns a ready `GameState`, or `None` if the user quits.
+fn startup_menu() -> Option<GameState> {
+    let saves = save::list_saves();
+
+    if !saves.is_empty() {
+        println!("  Saved games:");
+        println!();
+        for (i, s) in saves.iter().enumerate() {
+            println!("  [{}] {}  —  {}  —  {}  —  {}",
+                i + 1,
+                s.player.name,
+                s.current_system.name,
+                save::mode_label(s.galaxy.mode),
+                s.timestamp_display(),
+            );
+        }
+        println!();
+        println!("  [N] New game");
+        println!("  [Q] Quit");
+        println!();
+
+        loop {
+            let choice = prompt("  > ");
+            let choice = choice.trim();
+            if choice.eq_ignore_ascii_case("q") { return None; }
+            if choice.eq_ignore_ascii_case("n") { break; }
+            if let Ok(n) = choice.parse::<usize>() {
+                if n >= 1 && n <= saves.len() {
+                    let s = &saves[n - 1];
+                    println!();
+                    println!("  Welcome back, {}. Resuming in {}.", s.player.name, s.current_system.name);
+                    pause();
+                    return Some(GameState::from_save(s));
+                }
+            }
+            println!("  Please enter a number, N, or Q.");
+        }
+        println!();
+    }
+
+    // ── Universe mode ────────────────────────────────────────────────────────
     println!("  Choose your universe:");
     println!();
     println!("  [1] Real Universe — real star catalog, known exoplanets, real solar system");
@@ -75,19 +183,26 @@ fn main() {
 
     // ── Explorer name ────────────────────────────────────────────────────────
     let name = prompt("  Enter your name, explorer: ");
+    let name = name.trim().to_string();
     if name.is_empty() {
         println!("  Coward. Goodbye.");
-        return;
+        return None;
     }
 
-    let mut gs = GameState::new(name.clone(), mode);
-
+    let gs = GameState::new(name.clone(), mode);
     println!();
     println!("  Greetings, {}. Your ship — {} — is fuelled and ready.", name, gs.ship.name);
     println!("  You begin in the {} system.", gs.current_system.name);
     pause();
 
-    game_loop(&mut gs);
+    Some(gs)
+}
+
+fn save_game(gs: &GameState) {
+    match save::save(&gs.to_save()) {
+        Ok(_)  => { println!("\n  Game saved."); pause(); }
+        Err(e) => { println!("\n  Save failed: {}", e); pause(); }
+    }
 }
 
 fn game_loop(gs: &mut GameState) {
@@ -114,6 +229,7 @@ fn game_loop(gs: &mut GameState) {
         println!("  [6] Periodic table reference");
         println!("  [7] Physics reference");
         println!("  [8] Consult ARIA (ship's AI)");
+        println!("  [s] Save game");
         println!("  [q] Quit");
 
         let choice = prompt("\n  > ");
@@ -127,7 +243,12 @@ fn game_loop(gs: &mut GameState) {
             "6" => periodic_table_menu(),
             "7" => physics_menu(gs),
             "8" => aria_chat(gs),
+            "s" | "S" => save_game(gs),
             "q" | "Q" => {
+                let confirm = prompt("\n  Save before quitting? [Y/n] ");
+                if !confirm.trim().eq_ignore_ascii_case("n") {
+                    save_game(gs);
+                }
                 println!("\n  Safe travels, {}. The stars will remember you.", gs.player.name);
                 break;
             }

@@ -1,9 +1,10 @@
 use rand::{Rng, SeedableRng};
 use rand::rngs::SmallRng;
+use serde::{Deserialize, Serialize};
 use crate::universe::system::StarSystem;
 use crate::universe::catalog;
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub enum GalaxyMode {
     /// Real star catalog + known exoplanets, procedural fallback for deep space.
     RealUniverse,
@@ -11,6 +12,7 @@ pub enum GalaxyMode {
     Procedural,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Galaxy {
     pub name: String,
     pub seed: u64,
