@@ -69,7 +69,7 @@ impl GameState {
 
 fn main() {
     clear();
-    print_header("C O S M O S  —  An Explorer's Guide to the Universe");
+    print_header("C O S M I C  S I M  —  An Explorer's Guide to the Universe");
 
     println!("  Welcome. You are about to embark on a journey through the cosmos.");
     println!("  Every star, planet, and atom you encounter obeys real physics.");
