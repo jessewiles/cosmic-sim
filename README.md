@@ -26,6 +26,14 @@ As you travel, time dilation closes the gap between your departure and the prese
 
 Download the latest release for your platform from the [Releases](../../releases) page.
 
+**macOS note:** the binaries are unsigned, so macOS will show a security warning on first run. To clear it:
+
+```bash
+xattr -d com.apple.quarantine cosmic-sim-macos-arm64
+# or for Intel:
+xattr -d com.apple.quarantine cosmic-sim-macos-x86_64
+```
+
 ### Build from source
 
 ```bash

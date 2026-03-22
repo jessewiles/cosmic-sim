@@ -96,3 +96,4 @@ jobs:
         with:
           files: artifacts/**/*
           generate_release_notes: true
+          body_path: .github/release-template.md
