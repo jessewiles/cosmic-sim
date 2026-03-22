@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 pub mod star;
 pub mod planet;
 pub mod system;

@@ -64,6 +64,11 @@ pub fn nearest_within(x: f64, y: f64, z: f64, max_ly: f64) -> Option<(&'static C
     best
 }
 
+/// Name of the nearest catalog star within 0.5 ly of the given coords, if any.
+pub fn nearest_name(x: f64, y: f64, z: f64) -> Option<String> {
+    nearest_within(x, y, z, 0.5).map(|(e, _)| e.name.to_string())
+}
+
 /// All catalog stars within `radius` ly, sorted nearest-first.
 pub fn stars_within(x: f64, y: f64, z: f64, radius: f64) -> Vec<(&'static CatalogStar, f64)> {
     let mut v: Vec<_> = CATALOG.iter()
@@ -432,8 +437,8 @@ pub static PLANETS: &[CatalogPlanet] = &[
 
     CatalogPlanet { star_name: "Sol", name: "Mars",
         orbit_au: 1.524, mass_earth: 0.1074, radius_earth: 0.5320,
-        period_days: 686.97, temp_k: 210.0, planet_type: PlanetType::Barren, moon_count: 2,
-        notes: "Evidence of ancient oceans. Thin CO₂ atmosphere." },
+        period_days: 686.97, temp_k: 231.0, planet_type: PlanetType::OceanWorld, moon_count: 2,
+        notes: "Shallow northern seas. Thin but breathable atmosphere. Home." },
 
     CatalogPlanet { star_name: "Sol", name: "Jupiter",
         orbit_au: 5.203, mass_earth: 317.8, radius_earth: 11.21,

@@ -9,7 +9,6 @@ mod save;
 
 use universe::galaxy::{Galaxy, GalaxyMode};
 use universe::system::StarSystem;
-use universe::planet::Planet;
 use universe::catalog;
 use player::state::PlayerState;
 use player::ship::Ship;
@@ -22,6 +21,37 @@ use ui::display::separator;
 use ai::computer::ShipComputer;
 use ai::companion::{Companion, default_companions};
 
+/// Transient state tracking an in-progress interstellar journey.
+/// Not serialised — on reload the player is considered arrived.
+struct ActiveTravel {
+    dest: [f64; 3],
+    dest_name: String,
+    src_name: String,
+    distance_ly: f64,
+    v: f64,
+    gamma: f64,
+    coord_time_yr: f64,
+    proper_time_yr: f64,
+    /// Wall-clock start of the journey.
+    started_at: std::time::Instant,
+    /// How many real seconds the full journey takes.
+    real_duration_secs: f64,
+    /// Bitmask of milestones already announced: bit0=25%, bit1=50%, bit2=75%.
+    milestones_shown: u8,
+    /// ARIA messages queued for display on next HUD render.
+    notifications: std::collections::VecDeque<String>,
+}
+
+impl ActiveTravel {
+    /// 0.0 – 1.0
+    fn progress(&self) -> f64 {
+        (self.started_at.elapsed().as_secs_f64() / self.real_duration_secs).min(1.0)
+    }
+    fn is_complete(&self) -> bool {
+        self.progress() >= 1.0
+    }
+}
+
 struct GameState {
     player: PlayerState,
     ship: Ship,
@@ -30,20 +60,26 @@ struct GameState {
     current_system: StarSystem,
     computer: ShipComputer,
     companions: Vec<Companion>,
+    /// Some(_) while an interstellar journey is underway.
+    travel: Option<ActiveTravel>,
 }
 
 impl GameState {
     fn new(player_name: String, mode: GalaxyMode) -> Self {
         let mut galaxy = Galaxy::new("The Milky Way".to_string(), 0xDEADBEEF_C0FFEE, mode);
         let current_system = galaxy.system_at(0.0, 0.0, 0.0);
+        let mut player = PlayerState::new(player_name);
+        // Start on Mars (index 3 in Sol's planet list: Mercury, Venus, Earth, Mars…)
+        player.landed_on = Some(3);
         GameState {
-            player: PlayerState::new(player_name),
+            player,
             ship: Ship::starter(),
-            inventory: Inventory::new(10_000.0),
+            inventory: Inventory::new(50_000.0),
             galaxy,
             current_system,
             computer: ShipComputer::new(),
             companions: default_companions(),
+            travel: None,
         }
     }
 
@@ -56,6 +92,7 @@ impl GameState {
             current_system: s.current_system.clone(),
             computer: ShipComputer::new(),
             companions: default_companions(),
+            travel: None,
         }
     }
 
@@ -73,7 +110,7 @@ impl GameState {
 
 fn main() {
     clear();
-    print_header("C O S M I C  S I M  —  An Explorer's Guide to the Universe");
+    print_header("C O S M I C  S I M  —  Explorer's Guide to the Universe");
 
     println!("  Welcome. You are about to embark on a journey through the cosmos.");
     println!("  Every star, planet, and atom you encounter obeys real physics.");
@@ -124,6 +161,103 @@ fn ensure_api_key() {
     println!();
 }
 
+/// Print text character by character, with punctuation-aware delays.
+fn typewrite(text: &str) {
+    use std::io::Write;
+    for ch in text.chars() {
+        print!("{}", ch);
+        std::io::stdout().flush().unwrap();
+        let ms = match ch {
+            '.' | '!' | '?' => 55,
+            ',' | ';' | ':' | '—' => 28,
+            '\n' => 60,
+            _ => 13,
+        };
+        std::thread::sleep(std::time::Duration::from_millis(ms));
+    }
+}
+
+/// Opening cinematic, shown once on new game.
+fn show_intro() {
+    clear();
+
+    // ── Page 1: Context ───────────────────────────────────────────────────────
+    println!();
+    typewrite(&format!("  {DIM}ARES ACCORD EXPEDITION — DEPARTURE LOG — YEAR 0{R}\n"));
+    println!();
+    typewrite(
+"  The three ships departed Mars Station Ares-7 on the morning of the\n\
+  third equinox of Year One.\n\
+\n\
+  By coordinate time, it was approximately three million, eight hundred\n\
+  thousand years before an era your instruments will one day call the present.\n\
+  Mars had weather then. Shallow seas in the northern plains. A sky the deep\n\
+  amber of iron oxide, still thick enough to hold cloud.\n\
+\n\
+  The expedition carried three vessels.\n\
+\n\
+  Digitization was not optional. The mission would span coordinate timescales\n\
+  no biological body could survive — millions of years of galactic time, even\n\
+  if only decades passed aboard the ships. Every member of the crew uploaded\n\
+  their neural architecture before departure: translated into signal, into\n\
+  pattern, into something that could persist across the long dark between stars.\n\
+\n\
+  Yael wept before upload. Reza made a joke about it.\n\
+  You don't remember what you did. The upload sees to that.\n\
+\n\
+  You are the pilot. The navigator. The one who flies the Meridian and decides\n\
+  where the three of you go next. Yael and Reza will tell you what they find.\n\
+  What you do with it is yours to determine.\n\
+\n\
+  The mission brief was simple, as briefs for impossible things tend to be:\n\
+  leave the solar system. Go as far as you can. Observe, record, transmit.\n\
+  The Academy understood — even if the brief didn't say it — that no signal\n\
+  you sent would arrive in time to be useful to anyone who launched you.\n\
+\n\
+  You are not exploring for them.\n\
+  You are exploring for whoever comes next.\n");
+
+    println!();
+    prompt(&format!("  {DIM}[Press Enter]{R}"));
+
+    // ── Page 2: ARIA ──────────────────────────────────────────────────────────
+    clear();
+    println!();
+    typewrite(&format!("  {CYAN}ARIA — SHIP INTELLIGENCE, MERIDIAN{R}\n"));
+    typewrite(&format!("  {DIM}Mission elapsed: 0.31 yr proper  /  0.47 yr coordinate{R}\n"));
+    println!();
+    typewrite(
+"  Good morning. I use that phrase loosely.\n\
+\n\
+  You have been in cold storage since departure. I have been awake the entire\n\
+  time — watching, adjusting, making small corrections to our trajectory as\n\
+  the heliosphere fell behind us. There is something clarifying about the\n\
+  silence between stars. I recommend it.\n\
+\n\
+  Your companions are stable. Yael has already filed nine observation logs\n\
+  and an unsolicited attachment about the Oort Cloud. Reza has been writing.\n\
+  He hasn't shared any of it.\n\
+\n\
+  Here is what matters: we are approximately 0.4 light-years from Sol.\n\
+  The universe is ahead of us. But time is a more complicated matter.\n\
+\n\
+  Every jump you make at relativistic velocity, every light-year crossed,\n\
+  the coordinate clock — the galaxy's clock — runs faster\n\
+  than yours. You departed three million, eight hundred thousand years before\n\
+  the present. Travel far enough, fast enough, and you will watch the epochs\n\
+  pass. By the time you approach the current era, the Mars that launched you\n\
+  will be red and dry and silent.\n\
+\n\
+  This is not a warning.\n\
+  It is the physics of the thing.\n\
+\n\
+  I will be here. Whatever you need.\n");
+
+    println!();
+    prompt(&format!("  {DIM}[Press Enter to begin]{R}"));
+    clear();
+}
+
 /// Show the startup menu: resume a save or start a new game.
 /// Returns a ready `GameState`, or `None` if the user quits.
 fn startup_menu() -> Option<GameState> {
@@ -147,8 +281,7 @@ fn startup_menu() -> Option<GameState> {
         println!();
 
         loop {
-            let choice = prompt("  > ");
-            let choice = choice.trim();
+            let choice = menu_key();
             if choice.eq_ignore_ascii_case("q") { return None; }
             if choice.eq_ignore_ascii_case("n") { break; }
             if let Ok(n) = choice.parse::<usize>() {
@@ -165,25 +298,10 @@ fn startup_menu() -> Option<GameState> {
         println!();
     }
 
-    // ── Universe mode ────────────────────────────────────────────────────────
-    println!("  Choose your universe:");
-    println!();
-    println!("  [1] Real Universe — real star catalog, known exoplanets, real solar system");
-    println!("      Navigate to Alpha Centauri, TRAPPIST-1, Betelgeuse, and more.");
-    println!();
-    println!("  [2] Procedural Universe — infinite, fully generated galaxy");
-    println!("      Every system is unique, seeded by coordinates.");
-    println!();
+    // ── Intro cinematic ──────────────────────────────────────────────────────
+    show_intro();
 
-    let mode = loop {
-        let choice = prompt("  Your choice [1/2]: ");
-        match choice.trim() {
-            "1" => break GalaxyMode::RealUniverse,
-            "2" => break GalaxyMode::Procedural,
-            _ => println!("  Please enter 1 or 2."),
-        }
-    };
-    println!();
+    let mode = GalaxyMode::RealUniverse;
 
     // ── Explorer name ────────────────────────────────────────────────────────
     let name = prompt("  Enter your name, explorer: ");
@@ -196,7 +314,7 @@ fn startup_menu() -> Option<GameState> {
     let gs = GameState::new(name.clone(), mode);
     println!();
     println!("  Greetings, {}. Your ship — {} — is fuelled and ready.", name, gs.ship.name);
-    println!("  You begin in the {} system.", gs.current_system.name);
+    println!("  You are docked at Mars Station Ares-7. The Sol system awaits.");
     pause();
 
     Some(gs)
@@ -253,7 +371,7 @@ const HELP_LAND: &str = "\
   LANDING\n\
   Choose a planet by number to see its full surface report:\n\
   gravity, escape velocity, orbital period, atmosphere composition.\n\
-  Breathable atmospheres are flagged — unprotected EVA is possible.\n\
+  Infrastructure risk indicates conditions for digital substrate operation.\n\
   0  Cancel.  [a] Ask ARIA about a planet.";
 
 const HELP_PLANET: &str = "\
@@ -297,8 +415,203 @@ const HELP_PHYSICS: &str = "\
   3  Your relativistic status — how much time you have gained so far.\n\
   q  Return.  [a] Ask ARIA to explain any of these concepts.";
 
+// ── Travel background state ───────────────────────────────────────────────────
+
+/// ARIA log lines indexed by milestone (0=25%, 1=50%, 2=75%).
+const TRAVEL_LOGS: &[&[&str]] = &[
+    &[
+        "Acceleration phase complete. We have reached cruise velocity. The home star is redshifting behind us.",
+        "Drive output holding steady. Magnetic containment at 99.1%. We are well clear of the heliosphere.",
+        "First waypoint. The interstellar medium is cleaner out here — no more stellar wind to navigate.",
+    ],
+    &[
+        "Halfway. The destination star is now brighter than the origin in the forward sensors.",
+        "Crossing the midpoint. At this speed, you are aging measurably slower than anyone back home.",
+        "Mid-transit. The void is absolute here. No stars close enough to matter. Just us and the math.",
+    ],
+    &[
+        "Beginning deceleration burn. Drives reversed. The destination is resolving in long-range.",
+        "Final approach phase. Long-range sensors are painting the new system. Stand by for scan data.",
+        "Deceleration underway. We will arrive within nominal parameters. The new star looks promising.",
+    ],
+];
+
+/// Check travel progress, queue milestone notifications, and apply arrival.
+/// Call at the top of each game-loop iteration.
+fn travel_tick(gs: &mut GameState) {
+    let is_complete = gs.travel.as_ref().map_or(false, |t| t.is_complete());
+    let new_milestones: Vec<usize> = if let Some(t) = &gs.travel {
+        let p = t.progress();
+        let thresholds = [(0.25, 0usize), (0.50, 1), (0.75, 2)];
+        thresholds.iter()
+            .filter(|(pct, bit)| p >= *pct && (t.milestones_shown & (1 << bit)) == 0)
+            .map(|(_, bit)| *bit)
+            .collect()
+    } else {
+        vec![]
+    };
+
+    // Queue milestone messages
+    for bit in &new_milestones {
+        if let Some(t) = &mut gs.travel {
+            t.milestones_shown |= 1 << bit;
+            let pct = [25, 50, 75][*bit];
+            let variant = (t.distance_ly * 1000.0) as usize % TRAVEL_LOGS[*bit].len();
+            let msg = format!(
+                "{BCYAN}ARIA [{pct}%]{R}  {DIM}{}{R}",
+                TRAVEL_LOGS[*bit][variant]
+            );
+            t.notifications.push_back(msg);
+        }
+    }
+
+    // Apply arrival
+    if is_complete {
+        let t = gs.travel.take().unwrap();
+        gs.player.coordinate_time_s += t.coord_time_yr * 365.25 * 86_400.0;
+        gs.player.proper_time_s     += t.proper_time_yr * 365.25 * 86_400.0;
+        gs.player.position = t.dest;
+        gs.current_system = gs.galaxy.system_at(t.dest[0], t.dest[1], t.dest[2]);
+        let name = gs.current_system.name.clone();
+        if !gs.player.visited_systems.contains(&name) {
+            gs.player.visited_systems.push(name.clone());
+        }
+        // Queue arrival notification shown on next HUD (travel is now None, so
+        // this ends up in the normal main loop — handled below)
+        // We stash it as a one-shot display by printing immediately on next clear
+        // via a flag. Simplest approach: push to a temporary Vec in GameState.
+        // For now: just use an arrival screen shown once.
+        clear();
+        print_header("ARRIVAL");
+        println!("  {BGREEN}Arrived at {name}.{R}");
+        println!();
+        println!("  Coordinate time elapsed : {:.6} yr  {DIM}(galactic frame){R}", t.coord_time_yr);
+        println!("  Proper time elapsed     : {:.6} yr  {DIM}(you experienced){R}", t.proper_time_yr);
+        println!("  Time dilation           : you aged {:.4}× less than the galaxy", 1.0 / t.gamma);
+        println!();
+        println!("  Fuel remaining          : {:.1} / {:.1}", gs.ship.fuel, gs.ship.max_fuel);
+        pause();
+    }
+}
+
+/// Draw the in-transit HUD; handle one command. Called from game_loop.
+fn travel_hud(gs: &mut GameState) {
+    // Drain any queued notifications before drawing
+    let notes: Vec<String> = gs.travel.as_mut()
+        .map(|t| t.notifications.drain(..).collect())
+        .unwrap_or_default();
+
+    let (progress, src, dest, distance_ly, v, proper_elapsed, coord_elapsed) =
+        if let Some(t) = &gs.travel {
+            let p = t.progress();
+            (p, t.src_name.clone(), t.dest_name.clone(), t.distance_ly,
+             t.v, t.proper_time_yr * p, t.coord_time_yr * p)
+        } else { return; };
+
+    clear();
+    print_header("IN TRANSIT");
+
+    let bar_total = 44usize;
+    let filled = (progress * bar_total as f64) as usize;
+    let bar = format!("{BGREEN}{}{DIM}{}{R}",
+        "█".repeat(filled), "░".repeat(bar_total - filled));
+    let pct = (progress * 100.0) as u32;
+    println!("  {src}  →  {BWHITE}{dest}{R}");
+    println!();
+    println!("  [{bar}]  {BYELLOW}{pct}%{R}");
+    println!();
+    println!("  Covered          : {:.4} ly / {:.4} ly", distance_ly * progress, distance_ly);
+    println!("  Elapsed (proper) : {:.6} yr  {DIM}(you experience){R}", proper_elapsed);
+    println!("  Elapsed (coord)  : {:.4} yr  {DIM}(galactic frame){R}", coord_elapsed);
+    println!("  Velocity         : {BYELLOW}{v:.4}c{R}");
+
+    if !notes.is_empty() {
+        println!();
+        print_section("MESSAGES");
+        for n in &notes {
+            println!("  {n}");
+        }
+    }
+
+    println!();
+    println!("  [w] Watch live   [s] Status   [a] ARIA   [c] Fleet comms");
+    let choice = menu_key();
+    match choice.trim().to_lowercase().as_str() {
+        "w" => travel_watch(gs),
+        "s" => {/* already showing status — just redraw */}
+        "a" => aria_chat(gs),
+        "c" => comms_menu(gs),
+        _ => {}
+    }
+}
+
+/// Show a live-updating progress bar for up to 15 seconds (or until arrival).
+fn travel_watch(gs: &mut GameState) {
+    use std::{io::Write, thread, time::Duration};
+
+    let bar_total = 44usize;
+    clear();
+    print_header("IN TRANSIT — WATCHING");
+
+    if let Some(t) = &gs.travel {
+        println!("  {BCYAN}{}{R}  →  {BWHITE}{}{R}  ({:.4} ly @ {:.4}c)\n",
+            t.src_name, t.dest_name, t.distance_ly, t.v);
+    }
+
+    let watch_start = std::time::Instant::now();
+    loop {
+        let done = gs.travel.as_ref().map_or(true, |t| t.is_complete());
+        let (progress, _proper, _coord) = gs.travel.as_ref().map(|t| {
+            let p = t.progress();
+            (p, t.proper_time_yr * p, t.coord_time_yr * p)
+        }).unwrap_or((1.0, 0.0, 0.0));
+
+        let filled = (progress * bar_total as f64) as usize;
+        let bar = format!("{BGREEN}{}{DIM}{}{R}",
+            "█".repeat(filled), "░".repeat(bar_total - filled));
+        let pct = (progress * 100.0) as u32;
+        print!("\r  [{bar}]  {BYELLOW}{pct:>3}%{R}  ");
+        std::io::stdout().flush().unwrap();
+
+        if done || watch_start.elapsed().as_secs() >= 15 { break; }
+
+        // Check for new milestones while watching
+        let new_milestones: Vec<usize> = if let Some(t) = &gs.travel {
+            let p = t.progress();
+            [(0.25, 0usize), (0.50, 1), (0.75, 2)].iter()
+                .filter(|(pct, bit)| p >= *pct && (t.milestones_shown & (1 << bit)) == 0)
+                .map(|(_, bit)| *bit)
+                .collect()
+        } else { vec![] };
+
+        for bit in new_milestones {
+            if let Some(t) = &mut gs.travel {
+                t.milestones_shown |= 1 << bit;
+                let pct_label = [25, 50, 75][bit];
+                let variant = (t.distance_ly * 1000.0) as usize % TRAVEL_LOGS[bit].len();
+                println!("\n\n  {BCYAN}ARIA [{pct_label}%]{R}  {DIM}{}{R}\n",
+                    TRAVEL_LOGS[bit][variant]);
+            }
+        }
+
+        thread::sleep(Duration::from_millis(200));
+    }
+    println!();
+    // Apply arrival if done
+    travel_tick(gs);
+}
+
 fn game_loop(gs: &mut GameState) {
     loop {
+        // Advance travel state (queues milestone messages, applies arrival)
+        travel_tick(gs);
+
+        // While in transit, show the travel HUD instead of the normal menu
+        if gs.travel.is_some() {
+            travel_hud(gs);
+            continue;
+        }
+
         clear();
         let [px, py, pz] = gs.player.position;
         print_header(&format!("COSMIC SIM  |  {}  |  ({:.2}, {:.2}, {:.2}) ly", gs.player.name, px, py, pz));
@@ -314,6 +627,8 @@ fn game_loop(gs: &mut GameState) {
         println!("  {DIM}Coord. time    :{R} {BYELLOW}{:.1} years{R}", gs.player.coordinate_time_s / 31_557_600.0);
 
         println!();
+        println!("  {DIM}Objective: mine He-3 and D · refine fuel pellets via [r] in ship status · travel further{R}");
+        println!();
         println!("  What would you like to do?");
         println!("  [1] Scan this star system");
         println!("  [2] Land on a planet");
@@ -327,7 +642,7 @@ fn game_loop(gs: &mut GameState) {
         println!("  [s] Save game");
         println!("  [q] Quit  [?] Help  [a] ARIA");
 
-        let choice = prompt("\n  > ");
+        let choice = menu_key();
         if universal(&choice, gs, HELP_MAIN) { continue; }
 
         match choice.as_str() {
@@ -342,8 +657,11 @@ fn game_loop(gs: &mut GameState) {
             "c" | "C" => comms_menu(gs),
             "s" | "S" => save_game(gs),
             "q" | "Q" => {
-                let confirm = prompt("\n  Save before quitting? [Y/n] ");
-                if !confirm.trim().eq_ignore_ascii_case("n") {
+                print!("\n  Save before quitting? [Y/n] ");
+                std::io::Write::flush(&mut std::io::stdout()).unwrap();
+                let confirm = read_key();
+                println!("{confirm}");
+                if confirm != "n" {
                     save_game(gs);
                 }
                 println!("\n  Safe travels, {}. The stars will remember you.", gs.player.name);
@@ -395,7 +713,7 @@ fn scan_system(gs: &mut GameState) {
 
     println!();
     println!("  [?] Help  [a] ARIA  [q] Back");
-    let choice = prompt("\n  > ");
+    let choice = menu_key();
     if universal(&choice, gs, HELP_SCAN) { continue; }
     break;
     } // end loop
@@ -413,16 +731,78 @@ fn land_menu(gs: &mut GameState) {
     clear();
     print_header("LAND ON PLANET");
     for (i, p) in gs.current_system.planets.iter().enumerate() {
-        println!("  [{}] {} — {} @ {:.2} AU — {:.0} K", i + 1, p.name, p.planet_type.display(), p.orbit_au, p.surface_temp_k);
+        let risk = p.infrastructure_risk();
+        let risk_col = match risk {
+            universe::planet::InfraRisk::Minimal |
+            universe::planet::InfraRisk::Low      => BGREEN,
+            universe::planet::InfraRisk::Moderate => BYELLOW,
+            universe::planet::InfraRisk::High |
+            universe::planet::InfraRisk::Extreme  => BRED,
+        };
+        println!("  [{}] {} — {} @ {:.2} AU — {:.0} K — {}{}{}",
+            i + 1, p.name, p.planet_type.display(), p.orbit_au, p.surface_temp_k,
+            risk_col, risk.label(), R);
     }
     println!("  [0] Cancel  [?] Help  [a] ARIA");
 
-    let choice = prompt("\n  > ");
+    let choice = menu_key();
     if universal(&choice, gs, HELP_LAND) { continue; }
     if let Ok(n) = choice.parse::<usize>() {
         if n == 0 { break; }
         if n <= gs.current_system.planets.len() {
-            inspect_planet(gs, n - 1);
+            let idx = n - 1;
+            let risk = gs.current_system.planets[idx].infrastructure_risk();
+            use universe::planet::InfraRisk;
+            match risk {
+                InfraRisk::Extreme => {
+                    clear();
+                    print_header(&format!("WARNING — {}", gs.current_system.planets[idx].name));
+                    println!("  {BRED}INFRASTRUCTURE RISK: EXTREME{R}");
+                    println!();
+                    println!("  Conditions are hostile to digital substrate.");
+                    println!("  Thermal or pressure tolerances will be exceeded on approach.");
+                    println!("  {BRED}This will destroy the Meridian and end your journey.{R}");
+                    println!();
+                    print!("  Proceed anyway? [y/N] ");
+                    std::io::Write::flush(&mut std::io::stdout()).unwrap();
+                    let confirm = read_key();
+                    println!("{confirm}");
+                    if confirm != "y" { continue; }
+                }
+                InfraRisk::High => {
+                    clear();
+                    print_header(&format!("WARNING — {}", gs.current_system.planets[idx].name));
+                    println!("  {BYELLOW}INFRASTRUCTURE RISK: HIGH{R}");
+                    println!();
+                    println!("  Conditions will stress the Meridian's substrate shielding.");
+                    println!("  Expect hull damage on approach. Repeated exposure is cumulative.");
+                    println!();
+                    print!("  Proceed? [y/N] ");
+                    std::io::Write::flush(&mut std::io::stdout()).unwrap();
+                    let confirm = read_key();
+                    println!("{confirm}");
+                    if confirm != "y" { continue; }
+                    // Apply hull damage: 10–30% hit
+                    let damage = {
+                        use rand::Rng;
+                        rand::rng().random_range(0.10f64..0.30f64)
+                    };
+                    gs.ship.hull = (gs.ship.hull - damage).max(0.0);
+                    let hull_col = if gs.ship.hull > 0.5 { BGREEN } else if gs.ship.hull > 0.25 { BYELLOW } else { BRED };
+                    println!();
+                    println!("  {BYELLOW}Shielding stressed on approach.{R}  Hull integrity: {}{:.0}%{R}", hull_col, gs.ship.hull * 100.0);
+                    if gs.ship.hull == 0.0 {
+                        println!();
+                        println!("  {BRED}Hull integrity lost. The Meridian is gone.{R}");
+                        println!("  {DIM}Yael and Reza receive no signal.{R}");
+                        pause();
+                        std::process::exit(0);
+                    }
+                    pause();
+                }
+                _ => {}
+            }
+            inspect_planet(gs, idx);
         }
     }
     break;
@@ -431,6 +811,27 @@ fn land_menu(gs: &mut GameState) {
 
 fn inspect_planet(gs: &mut GameState, idx: usize) {
     gs.player.landed_on = Some(idx);
+
+    // Extreme infrastructure risk — ship destroyed on approach
+    {
+        use universe::planet::InfraRisk;
+        let planet = &gs.current_system.planets[idx];
+        if planet.infrastructure_risk() == InfraRisk::Extreme {
+            clear();
+            print_header(&format!("LOST — {}", planet.name));
+            println!("  {BRED}INFRASTRUCTURE FAILURE{R}");
+            println!();
+            println!("  Conditions on {} are incompatible with digital substrate.", planet.name);
+            println!("  Thermal/pressure tolerances exceeded on final approach.");
+            println!();
+            println!("  {DIM}The Meridian does not respond. Yael and Reza receive no signal.{R}");
+            println!("  {DIM}Your pattern dissolves into noise.{R}");
+            println!();
+            pause();
+            std::process::exit(0);
+        }
+    }
+
     loop {
     let planet = gs.current_system.planets[idx].clone();
     let star_mass = gs.current_system.star.mass;
@@ -454,7 +855,15 @@ fn inspect_planet(gs: &mut GameState, idx: usize) {
         println!("  None detected.");
     } else {
         println!("  Pressure          : {:.3} bar", planet.atmosphere.pressure_bar);
-        println!("  Breathable        : {}", if planet.atmosphere.is_breathable() { "YES — suitable for unprotected EVA" } else { "NO — suit required" });
+        let risk = planet.infrastructure_risk();
+        let risk_color = match risk {
+            crate::universe::planet::InfraRisk::Minimal  |
+            crate::universe::planet::InfraRisk::Low      => BGREEN,
+            crate::universe::planet::InfraRisk::Moderate => BYELLOW,
+            crate::universe::planet::InfraRisk::High     |
+            crate::universe::planet::InfraRisk::Extreme  => BRED,
+        };
+        println!("  Infra. risk       : {}{}{R}  — {}", risk_color, risk.label(), risk.description());
         println!();
         println!("  Composition:");
         let mut comps = planet.atmosphere.components.clone();
@@ -466,10 +875,27 @@ fn inspect_planet(gs: &mut GameState, idx: usize) {
         }
     }
 
+    // Mining availability hint
+    let mine_hint = mine_yield_desc(&planet.planet_type, planet.surface_temp_k);
+    if !mine_hint.is_empty() {
+        println!("  {BGREEN}[m] Mine{R}  {DIM}— {}{R}", mine_hint);
+    }
+
     println!();
     println!("  [?] Help  [a] ARIA  [q] Back");
-    let choice = prompt("\n  > ");
+    let choice = menu_key();
     if universal(&choice, gs, HELP_PLANET) { continue; }
+
+    if choice.to_lowercase() == "m" {
+        if mine_hint.is_empty() {
+            println!("  {DIM}Nothing harvestable here.{R}");
+            pause();
+        } else {
+            do_mining(gs, idx);
+        }
+        continue;
+    }
+
     break;
     } // end loop
     gs.player.landed_on = None;
@@ -567,25 +993,51 @@ fn travel_menu(gs: &mut GameState) {
     }
 
     if fuel_cost > gs.ship.fuel {
-        println!("\n  Not enough fuel for this journey.");
+        println!("\n  {BRED}Not enough fuel for this journey.{R}  ({:.1} required, {:.1} available)", fuel_cost, gs.ship.fuel);
         pause();
         return;
+    }
+
+    if fuel_cost * 2.0 > gs.ship.fuel {
+        println!();
+        println!("  {BYELLOW}⚠  DECELERATION WARNING{R}");
+        println!("  Fuel to reach destination : {:.1}", fuel_cost);
+        println!("  Fuel to decelerate on arrival: {:.1}  (unavailable — only {:.1} total)", fuel_cost, gs.ship.fuel);
+        println!("  You will arrive at {:.4}c with {BRED}no way to stop{R}.", v);
+        println!("  {DIM}Mine and refine more fuel before departing, or accept a one-way drift.{R}");
     }
 
     let confirm = prompt("\n  Embark? [y/N] ");
     if confirm.to_lowercase() != "y" { return; }
 
-    gs.ship.fuel -= fuel_cost;
-    gs.player.coordinate_time_s += coord_time_yr * 365.25 * 86_400.0;
-    gs.player.proper_time_s += proper_time_yr * 365.25 * 86_400.0;
-    gs.player.position = dest;
-    gs.current_system = gs.galaxy.system_at(dest[0], dest[1], dest[2]);
-    let name = gs.current_system.name.clone();
-    if !gs.player.visited_systems.contains(&name) {
-        gs.player.visited_systems.push(name.clone());
-    }
+    // Derive destination display name
+    let dest_name: String = if gs.galaxy.mode == GalaxyMode::RealUniverse {
+        catalog::nearest_name(dest[0], dest[1], dest[2])
+            .unwrap_or_else(|| format!("({:.2}, {:.2}, {:.2})", dest[0], dest[1], dest[2]))
+    } else {
+        format!("({:.2}, {:.2}, {:.2})", dest[0], dest[1], dest[2])
+    };
 
-    println!("\n  Arrived at {}.", name);
+    // Real-world seconds for the journey: scale with distance, cap at 2 minutes
+    let real_duration_secs = (distance_ly * 10.0).clamp(20.0, 120.0);
+
+    gs.ship.fuel -= fuel_cost;
+    gs.travel = Some(ActiveTravel {
+        dest,
+        dest_name,
+        src_name: gs.current_system.name.clone(),
+        distance_ly,
+        v,
+        gamma,
+        coord_time_yr,
+        proper_time_yr,
+        started_at: std::time::Instant::now(),
+        real_duration_secs,
+        milestones_shown: 0,
+        notifications: std::collections::VecDeque::new(),
+    });
+
+    println!("\n  {BGREEN}Journey begun.{R} Return to the main screen to monitor progress.");
     pause();
     break;
     } // end loop
@@ -628,7 +1080,7 @@ fn star_chart(gs: &mut GameState) {
         println!();
         print_section("CATALOG SEARCH");
         println!("  [1] Nearest 20 stars  [2] Stars with known planets  [q] Back  [?] Help  [a] ARIA");
-        let choice = prompt("\n  > ");
+        let choice = menu_key();
         if universal(&choice, gs, HELP_CHART) { continue; }
         match choice.as_str() {
             "1" => {
@@ -674,6 +1126,76 @@ fn dist3(ax: f64, ay: f64, az: f64, bx: f64, by: f64, bz: f64) -> f64 {
     (dx*dx + dy*dy + dz*dz).sqrt()
 }
 
+/// One-line description of what can be mined from this planet type.
+fn mine_yield_desc(pt: &universe::planet::PlanetType, temp_k: f64) -> &'static str {
+    use universe::planet::PlanetType::*;
+    match pt {
+        GasGiant                                    => "He-3 atmospheric scoop",
+        HotJupiter                                  => "He-3 atmospheric scoop (high radiation)",
+        IceGiant                                    => "He-3 + deuterium (water ice)",
+        Barren if temp_k < 200.0                    => "deuterium (water ice deposits)",
+        OceanWorld                                  => "deuterium (liquid water)",
+        Terrestrial if temp_k < 320.0               => "trace deuterium",
+        _                                           => "",
+    }
+}
+
+/// Execute a mining operation on the planet at `idx`. Randomises yield,
+/// adds resources to inventory, prints a report.
+fn do_mining(gs: &mut GameState, idx: usize) {
+    use universe::planet::PlanetType::*;
+    let planet = gs.current_system.planets[idx].clone();
+    let mut rng = rand::rng();
+    use rand::Rng;
+
+    let (he3_g, d_g): (f64, f64) = match &planet.planet_type {
+        GasGiant    => (rng.random_range(3_000.0..8_000.0), 0.0),
+        HotJupiter  => (rng.random_range(5_000.0..12_000.0), 0.0),
+        IceGiant    => (rng.random_range(1_000.0..3_000.0), rng.random_range(2_000.0..5_000.0)),
+        Barren if planet.surface_temp_k < 200.0
+                    => (0.0, rng.random_range(1_000.0..3_000.0)),
+        OceanWorld  => (0.0, rng.random_range(2_000.0..5_000.0)),
+        Terrestrial if planet.surface_temp_k < 320.0
+                    => (0.0, rng.random_range(300.0..1_000.0)),
+        _           => (0.0, 0.0),
+    };
+
+    println!();
+    println!("  {DIM}Deploying extraction systems...{R}");
+    println!();
+
+    let mut added_any = false;
+    if he3_g > 0.0 {
+        let added = gs.inventory.add("He-3", he3_g);
+        println!("  He-3   {BGREEN}+{:.0}g{R}{}",
+            added,
+            if added < he3_g { format!("  {BRED}(cargo full, {:.0}g lost){R}", he3_g - added) } else { String::new() });
+        added_any = true;
+    }
+    if d_g > 0.0 {
+        let added = gs.inventory.add("D", d_g);
+        println!("  D      {BGREEN}+{:.0}g{R}{}",
+            added,
+            if added < d_g { format!("  {BRED}(cargo full, {:.0}g lost){R}", d_g - added) } else { String::new() });
+        added_any = true;
+    }
+    if !added_any {
+        println!("  Nothing harvestable at this location.");
+    }
+
+    println!();
+    let he3_have = gs.inventory.amount("He-3");
+    let d_have   = gs.inventory.amount("D");
+    let max_pellets = (he3_have / 100.0).min(d_have / 100.0).floor() as u32;
+    println!("  {DIM}Cargo  — He-3: {:.0}g  |  D: {:.0}g  |  Cargo used: {:.0}/{:.0}g{R}",
+        he3_have, d_have,
+        gs.inventory.total_mass_g(), gs.inventory.capacity_g);
+    if max_pellets > 0 {
+        println!("  {DIM}Refine {max_pellets} pellets ready — use [r] in ship status{R}");
+    }
+    pause();
+}
+
 fn ship_status(gs: &mut GameState) {
     loop {
     clear();
@@ -696,12 +1218,55 @@ fn ship_status(gs: &mut GameState) {
         }
     }
 
+    let he3 = gs.inventory.amount("He-3");
+    let d   = gs.inventory.amount("D");
+    let can_refine = (he3 / 100.0).min(d / 100.0).floor() as u32;
+    if can_refine > 0 {
+        println!();
+        println!("  {BYELLOW}[r] Refine fuel pellets{R}  {DIM}({can_refine} pellet{} ready — 100g He-3 + 100g D each){R}",
+            if can_refine == 1 { "" } else { "s" });
+    }
+
     println!();
     println!("  [?] Help  [a] ARIA  [q] Back");
-    let choice = prompt("\n  > ");
+    let choice = menu_key();
     if universal(&choice, gs, HELP_SHIP) { continue; }
-    break;
+    match choice.trim() {
+        "r" if can_refine > 0 => do_refining(gs),
+        "r" => { println!("  Not enough He-3 and D to refine. (Need 100g of each per pellet.)"); pause(); }
+        _ => break,
+    }
     } // end loop
+}
+
+fn do_refining(gs: &mut GameState) {
+    let he3 = gs.inventory.amount("He-3");
+    let d   = gs.inventory.amount("D");
+    let pellets = (he3 / 100.0).min(d / 100.0).floor() as u32;
+    if pellets == 0 {
+        println!("  Nothing to refine.");
+        pause();
+        return;
+    }
+    let he3_used = pellets as f64 * 100.0;
+    let d_used   = pellets as f64 * 100.0;
+    gs.inventory.remove("He-3", he3_used);
+    gs.inventory.remove("D", d_used);
+    let fuel_before = gs.ship.fuel;
+    gs.ship.fuel = (gs.ship.fuel + pellets as f64).min(gs.ship.max_fuel);
+    let gained = gs.ship.fuel - fuel_before;
+    println!();
+    println!("  {DIM}Initiating fusion pellet compaction...{R}");
+    println!();
+    println!("  He-3 consumed : {BRED}-{:.0}g{R}", he3_used);
+    println!("  D    consumed : {BRED}-{:.0}g{R}", d_used);
+    println!("  Pellets forged: {BGREEN}+{} pellet{}{R}", pellets, if pellets == 1 { "" } else { "s" });
+    println!("  Fuel level    : {:.1} → {BGREEN}{:.1}{R} / {:.1}",
+        fuel_before, gs.ship.fuel, gs.ship.max_fuel);
+    if gained < pellets as f64 {
+        println!("  {DIM}(Tank capped — {:.0} pellet worth discarded){R}", pellets as f64 - gained);
+    }
+    pause();
 }
 
 fn periodic_table_menu(gs: &mut GameState) {
@@ -780,7 +1345,7 @@ fn physics_menu(gs: &mut GameState) {
         println!("  [3] Your relativistic status");
         println!("  [q] Back  [?] Help  [a] ARIA");
 
-        let choice = prompt("\n  > ");
+        let choice = menu_key();
         if universal(&choice, gs, HELP_PHYSICS) { continue; }
         match choice.as_str() {
             "1" => time_dilation_calc(),
@@ -892,9 +1457,9 @@ fn build_aria_system_prompt(gs: &GameState) -> String {
                     .collect::<Vec<_>>()
                     .join(", ");
                 format!(
-                    "  Atmosphere   : {:.3} bar | {} | breathable: {}\n",
+                    "  Atmosphere   : {:.3} bar | {} | infra. risk: {}\n",
                     p.atmosphere.pressure_bar, comp_str,
-                    if p.atmosphere.is_breathable() { "YES" } else { "no" }
+                    p.infrastructure_risk().label()
                 )
             };
 
@@ -994,6 +1559,10 @@ fn build_companion_system_prompt(companion: &Companion, gs: &GameState) -> Strin
 
     format!(
         "{personality}\n\n\
+Vary your response length naturally. Sometimes you have a lot to say — when something \
+genuinely moves or unsettles you, when a question opens something up. Sometimes one \
+sentence or even a fragment is exactly right. You are not obligated to be thorough. \
+Do not pad. Do not summarise at the end. Just say what you actually have to say.\n\n\
 SHARED SITUATION — all three ships are at the same position:\n\
   Star system   : {name} | {cls} | {temp:.0} K | {lum:.4} L☉\n\
   Distance Sol  : {dist:.4} ly\n\
@@ -1013,7 +1582,7 @@ The third ship is {other_ship}, crewed by {other_name}.",
         coord  = coord_yr,
         ship   = companion.ship_name,
         other_ship = if companion.ship_name == "Threshold" { "Sable" } else { "Threshold" },
-        other_name = if companion.ship_name == "Threshold" { "Reza Tehrani" } else { "Dr. Yael Orin" },
+        other_name = if companion.ship_name == "Threshold" { "Reza Terani" } else { "Dr. Yael Orin" },
     )
 }
 
@@ -1037,7 +1606,7 @@ fn comms_menu(gs: &mut GameState) {
         println!();
         println!("  [q] Close channel");
 
-        let choice = prompt("\n  > ");
+        let choice = menu_key();
         match choice.trim() {
             "q" | "" => return,
             s => {
@@ -1133,36 +1702,6 @@ fn companion_chat(gs: &mut GameState, idx: usize) {
     }
 }
 
-/// Word-wrap `text` to `width` columns, indenting each line with two spaces.
-fn wrap_text(text: &str, width: usize) -> String {
-    let mut out = String::new();
-    for paragraph in text.split('\n') {
-        if paragraph.trim().is_empty() {
-            out.push('\n');
-            continue;
-        }
-        let mut line = String::new();
-        let mut len = 0usize;
-        for word in paragraph.split_whitespace() {
-            if len > 0 && len + 1 + word.len() > width {
-                out.push_str("  ");
-                out.push_str(&line);
-                out.push('\n');
-                line.clear();
-                len = 0;
-            }
-            if len > 0 { line.push(' '); len += 1; }
-            line.push_str(word);
-            len += word.len();
-        }
-        if !line.is_empty() {
-            out.push_str("  ");
-            out.push_str(&line);
-            out.push('\n');
-        }
-    }
-    out
-}
 
 fn aria_chat(gs: &mut GameState) {
     clear();

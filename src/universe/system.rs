@@ -23,7 +23,7 @@ impl StarSystem {
 
         let star = Star::generate(&mut rng, name.clone());
         let planet_count = rng.random_range(0u8..=10u8);
-        let (hz_inner, hz_outer) = star.habitable_zone_au();
+        let (_hz_inner, _hz_outer) = star.habitable_zone_au();
 
         let mut planets = Vec::new();
         let mut orbit_au = rng.random_range(0.05f64..0.4f64);
@@ -79,10 +79,10 @@ impl StarSystem {
         }
     }
 
-    pub fn habitable_planets(&self) -> Vec<&Planet> {
-        let (hz_inner, hz_outer) = self.star.habitable_zone_au();
+    /// Planets where digital infrastructure can operate without reinforced shielding.
+    pub fn accessible_planets(&self) -> Vec<&Planet> {
         self.planets.iter()
-            .filter(|p| p.is_in_habitable_zone(hz_inner, hz_outer) && p.atmosphere.is_breathable())
+            .filter(|p| p.infrastructure_risk().is_low())
             .collect()
     }
 

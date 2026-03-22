@@ -99,6 +99,7 @@ pub fn save(game: &SavedGame) -> io::Result<()> {
     fs::write(path, json)
 }
 
+#[allow(dead_code)]
 pub fn load(slot: &str) -> io::Result<SavedGame> {
     let path = saves_dir().join(format!("{}.json", sanitize_slot(slot)));
     let json = fs::read_to_string(&path)?;

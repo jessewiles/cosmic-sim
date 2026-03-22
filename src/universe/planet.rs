@@ -62,7 +62,7 @@ impl Planet {
         name: String,
         orbit_au: f64,
         star_luminosity_solar: f64,
-        star_mass_solar: f64,
+        _star_mass_solar: f64,
     ) -> Self {
         // Equilibrium temperature (Bond albedo ~0.3)
         let albedo = rng.random_range(0.1f64..0.7f64);
@@ -95,7 +95,7 @@ impl Planet {
         }
     }
 
-    fn pick_type<R: Rng>(rng: &mut R, orbit_au: f64, temp_k: f64, lum: f64) -> PlanetType {
+    fn pick_type<R: Rng>(rng: &mut R, orbit_au: f64, _temp_k: f64, lum: f64) -> PlanetType {
         // Hot Jupiters hug their star
         if orbit_au < 0.1 && rng.random::<f64>() < 0.3 {
             return PlanetType::HotJupiter;
@@ -140,5 +140,79 @@ impl Planet {
 
     pub fn is_in_habitable_zone(&self, hz_inner: f64, hz_outer: f64) -> bool {
         self.orbit_au >= hz_inner && self.orbit_au <= hz_outer
+    }
+
+    /// Infrastructure risk for digital consciousnesses operating on the surface.
+    pub fn infrastructure_risk(&self) -> InfraRisk {
+        let t = self.surface_temp_k;
+        let p = self.atmosphere.pressure_bar;
+
+        // Gas giants / hot Jupiters: crushing pressure, no solid surface
+        match self.planet_type {
+            PlanetType::GasGiant | PlanetType::HotJupiter => return InfraRisk::Extreme,
+            PlanetType::IceGiant                          => return InfraRisk::High,
+            _ => {}
+        }
+
+        // Temperature extremes
+        if t > 700.0 || t < 50.0 { return InfraRisk::Extreme; }
+        if t > 500.0 || t < 80.0 { return InfraRisk::High; }
+
+        // Pressure extremes
+        if p > 100.0 { return InfraRisk::Extreme; }
+        if p > 20.0  { return InfraRisk::High; }
+
+        // Corrosive atmosphere
+        let has_sulfur = self.atmosphere.components.iter().any(|c| c.symbol == "SO₂");
+        if has_sulfur { return InfraRisk::High; }
+
+        // Vacuum — no convective cooling, unshielded radiation
+        if p == 0.0 { return InfraRisk::Moderate; }
+
+        // Elevated temperature or pressure
+        if t > 350.0 || t < 150.0 { return InfraRisk::Moderate; }
+        if p > 5.0                 { return InfraRisk::Moderate; }
+
+        // Benign band
+        if t >= 200.0 && t <= 320.0 && p >= 0.5 && p <= 3.0 {
+            return InfraRisk::Minimal;
+        }
+
+        InfraRisk::Low
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum InfraRisk {
+    Minimal,
+    Low,
+    Moderate,
+    High,
+    Extreme,
+}
+
+impl InfraRisk {
+    pub fn label(&self) -> &'static str {
+        match self {
+            InfraRisk::Minimal  => "MINIMAL",
+            InfraRisk::Low      => "LOW",
+            InfraRisk::Moderate => "MODERATE",
+            InfraRisk::High     => "HIGH",
+            InfraRisk::Extreme  => "EXTREME",
+        }
+    }
+
+    pub fn description(&self) -> &'static str {
+        match self {
+            InfraRisk::Minimal  => "benign — full sensor deployment possible",
+            InfraRisk::Low      => "standard shielding sufficient",
+            InfraRisk::Moderate => "elevated shielding recommended",
+            InfraRisk::High     => "reinforced housing required",
+            InfraRisk::Extreme  => "hostile to digital substrate",
+        }
+    }
+
+    pub fn is_low(&self) -> bool {
+        matches!(self, InfraRisk::Minimal | InfraRisk::Low)
     }
 }

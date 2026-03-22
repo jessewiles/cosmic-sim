@@ -27,7 +27,6 @@ pub fn schwarzschild_radius(mass_kg: f64) -> f64 {
 /// Returns the rate at which a clock at `distance_m` from center ticks
 /// relative to a clock at infinity. Factor < 1 means slower.
 pub fn gravitational_time_dilation(mass_kg: f64, distance_m: f64) -> f64 {
-    use super::constants::G;
     let rs = schwarzschild_radius(mass_kg);
     (1.0 - rs / distance_m).sqrt()
 }
