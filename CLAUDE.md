@@ -78,13 +78,15 @@ Mine He-3 and deuterium from planetary surfaces → refine into fuel pellets via
 
 ## Releases
 
+`main` is branch-protected — direct pushes are blocked, changes go through PRs. The `Makefile` handles the release sequence (bump → commit → tag → push):
+
 ```bash
-cargo release patch   # 0.2.1 → 0.2.2
-cargo release minor   # 0.2.1 → 0.3.0
-cargo release major   # 0.2.1 → 1.0.0
+make release-patch   # 0.2.1 → 0.2.2
+make release-minor   # 0.2.1 → 0.3.0
+make release-major   # 0.2.1 → 1.0.0
 ```
 
-CI builds binaries for Linux (musl), macOS (x86_64 + arm64), and Windows on every tagged release. See `.github/workflows/release.yml`.
+This bumps `version` in `Cargo.toml`, commits, tags `v{version}`, and pushes both the commit and tag. The CI then builds binaries for Linux (musl), macOS (x86_64 + arm64), and Windows and attaches them to the GitHub release. See `.github/workflows/release.yml`.
 
 ## Things to Know
 
