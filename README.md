@@ -2,9 +2,9 @@
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-A terminal-based space exploration game set 3.8 million years before the common era. You are a digitized Martian consciousness, departing Mars Station Ares-7 alongside two fellow travelers — Dr. Yael Orin and Reza Terani — as your civilization embarks on an interstellar voyage into an unmapped galaxy.
+A terminal-based space exploration game set 3.8 million years before the common era. You are a digitized Martian consciousness, departing Mars Station Ares-7 alongside two fellow travelers — Dr. Yael Orin and Reza Terani — as your civilization ventures into a galaxy charted by Martian astronomers but never visited.
 
-As you travel, time dilation closes the gap between your departure and the present day. The universe you explore is built from real star catalog data, with procedurally generated planetary systems.
+As you travel, time dilation closes the gap between your departure and the present day. The universe you explore is built from real star catalog data.
 
 ## Features
 
