@@ -3,6 +3,14 @@ name = "cosmic-sim"
 version = "0.1.0"
 edition = "2024"
 
+[package.metadata.release]
+push            = true
+publish         = false
+sign-tag        = false
+tag-name        = "v{{version}}"
+pre-release-commit-message = "chore: release v{{version}}"
+tag-message     = "Release v{{version}}"
+
 [dependencies]
 rand = "0.9"
 ratatui = "0.29"
