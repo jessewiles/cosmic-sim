@@ -1,5 +1,221 @@
 use serde::{Deserialize, Serialize};
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Isotope {
+    pub mass_number: u16,               // A = protons + neutrons
+    pub name: Option<&'static str>,     // e.g. "Deuterium", "Tritium"
+    pub natural_abundance: Option<f64>, // fraction 0.0–1.0; None = not naturally occurring
+    pub half_life_s: Option<f64>,       // None = stable; Some = half-life in seconds
+}
+
+impl Isotope {
+    pub fn is_stable(&self) -> bool {
+        self.half_life_s.is_none()
+    }
+
+    /// Human-readable half-life string.
+    pub fn half_life_display(&self) -> String {
+        match self.half_life_s {
+            None => "stable".into(),
+            Some(s) => {
+                const YEAR: f64 = 31_557_600.0;
+                const DAY:  f64 = 86_400.0;
+                const HOUR: f64 = 3_600.0;
+                const MIN:  f64 = 60.0;
+                if s >= YEAR * 1e9      { format!("{:.3e} yr",  s / YEAR) }
+                else if s >= YEAR * 1e6 { format!("{:.2} Myr",  s / (YEAR * 1e6)) }
+                else if s >= YEAR * 1e3 { format!("{:.2} kyr",  s / (YEAR * 1e3)) }
+                else if s >= YEAR       { format!("{:.3} yr",   s / YEAR) }
+                else if s >= DAY        { format!("{:.2} days",  s / DAY) }
+                else if s >= HOUR       { format!("{:.2} hr",   s / HOUR) }
+                else if s >= MIN        { format!("{:.2} min",  s / MIN) }
+                else                    { format!("{:.3} s",    s) }
+            }
+        }
+    }
+}
+
+/// Returns known isotopes for a given atomic number.
+/// Focuses on stable isotopes, named isotopes, and scientifically notable radioactive ones.
+pub fn isotopes_for(z: u8) -> Vec<Isotope> {
+    match z {
+        1 => vec![
+            Isotope { mass_number: 1,  name: Some("Protium"),   natural_abundance: Some(0.999885), half_life_s: None },
+            Isotope { mass_number: 2,  name: Some("Deuterium"), natural_abundance: Some(0.000115), half_life_s: None },
+            Isotope { mass_number: 3,  name: Some("Tritium"),   natural_abundance: None,           half_life_s: Some(388_782_048.0) }, // 12.32 yr
+        ],
+        2 => vec![
+            Isotope { mass_number: 3,  name: Some("Helium-3"),  natural_abundance: Some(0.000002), half_life_s: None },
+            Isotope { mass_number: 4,  name: Some("Helium-4"),  natural_abundance: Some(0.999998), half_life_s: None },
+        ],
+        3 => vec![
+            Isotope { mass_number: 6,  name: None, natural_abundance: Some(0.0759), half_life_s: None },
+            Isotope { mass_number: 7,  name: None, natural_abundance: Some(0.9241), half_life_s: None },
+        ],
+        4 => vec![
+            Isotope { mass_number: 9,  name: None, natural_abundance: Some(1.0), half_life_s: None },
+        ],
+        5 => vec![
+            Isotope { mass_number: 10, name: None, natural_abundance: Some(0.199), half_life_s: None },
+            Isotope { mass_number: 11, name: None, natural_abundance: Some(0.801), half_life_s: None },
+        ],
+        6 => vec![
+            Isotope { mass_number: 12, name: None, natural_abundance: Some(0.9893), half_life_s: None },
+            Isotope { mass_number: 13, name: None, natural_abundance: Some(0.0107), half_life_s: None },
+            Isotope { mass_number: 14, name: Some("Carbon-14"), natural_abundance: None, half_life_s: Some(1.809e11) }, // 5730 yr
+        ],
+        7 => vec![
+            Isotope { mass_number: 14, name: None, natural_abundance: Some(0.99632), half_life_s: None },
+            Isotope { mass_number: 15, name: None, natural_abundance: Some(0.00368), half_life_s: None },
+        ],
+        8 => vec![
+            Isotope { mass_number: 16, name: None, natural_abundance: Some(0.99757), half_life_s: None },
+            Isotope { mass_number: 17, name: None, natural_abundance: Some(0.00038), half_life_s: None },
+            Isotope { mass_number: 18, name: None, natural_abundance: Some(0.00205), half_life_s: None },
+        ],
+        9 => vec![
+            Isotope { mass_number: 19, name: None, natural_abundance: Some(1.0), half_life_s: None },
+        ],
+        10 => vec![
+            Isotope { mass_number: 20, name: None, natural_abundance: Some(0.9048), half_life_s: None },
+            Isotope { mass_number: 21, name: None, natural_abundance: Some(0.0027), half_life_s: None },
+            Isotope { mass_number: 22, name: None, natural_abundance: Some(0.0925), half_life_s: None },
+        ],
+        11 => vec![
+            Isotope { mass_number: 23, name: None, natural_abundance: Some(1.0), half_life_s: None },
+        ],
+        12 => vec![
+            Isotope { mass_number: 24, name: None, natural_abundance: Some(0.7899), half_life_s: None },
+            Isotope { mass_number: 25, name: None, natural_abundance: Some(0.1000), half_life_s: None },
+            Isotope { mass_number: 26, name: None, natural_abundance: Some(0.1101), half_life_s: None },
+        ],
+        13 => vec![
+            Isotope { mass_number: 27, name: None, natural_abundance: Some(1.0), half_life_s: None },
+        ],
+        14 => vec![
+            Isotope { mass_number: 28, name: None, natural_abundance: Some(0.9223), half_life_s: None },
+            Isotope { mass_number: 29, name: None, natural_abundance: Some(0.0467), half_life_s: None },
+            Isotope { mass_number: 30, name: None, natural_abundance: Some(0.0310), half_life_s: None },
+        ],
+        15 => vec![
+            Isotope { mass_number: 31, name: None, natural_abundance: Some(1.0), half_life_s: None },
+        ],
+        16 => vec![
+            Isotope { mass_number: 32, name: None, natural_abundance: Some(0.9499), half_life_s: None },
+            Isotope { mass_number: 33, name: None, natural_abundance: Some(0.0075), half_life_s: None },
+            Isotope { mass_number: 34, name: None, natural_abundance: Some(0.0425), half_life_s: None },
+            Isotope { mass_number: 36, name: None, natural_abundance: Some(0.0001), half_life_s: None },
+        ],
+        17 => vec![
+            Isotope { mass_number: 35, name: None, natural_abundance: Some(0.7576), half_life_s: None },
+            Isotope { mass_number: 37, name: None, natural_abundance: Some(0.2424), half_life_s: None },
+        ],
+        18 => vec![
+            Isotope { mass_number: 36, name: None, natural_abundance: Some(0.003365), half_life_s: None },
+            Isotope { mass_number: 38, name: None, natural_abundance: Some(0.000632), half_life_s: None },
+            Isotope { mass_number: 40, name: None, natural_abundance: Some(0.996003), half_life_s: None },
+        ],
+        19 => vec![
+            Isotope { mass_number: 39, name: None, natural_abundance: Some(0.932581), half_life_s: None },
+            Isotope { mass_number: 40, name: None, natural_abundance: Some(0.000117), half_life_s: Some(3.938e16) }, // 1.248 Gyr
+            Isotope { mass_number: 41, name: None, natural_abundance: Some(0.067302), half_life_s: None },
+        ],
+        20 => vec![
+            Isotope { mass_number: 40, name: None, natural_abundance: Some(0.96941), half_life_s: None },
+            Isotope { mass_number: 42, name: None, natural_abundance: Some(0.00647), half_life_s: None },
+            Isotope { mass_number: 43, name: None, natural_abundance: Some(0.00135), half_life_s: None },
+            Isotope { mass_number: 44, name: None, natural_abundance: Some(0.02086), half_life_s: None },
+            Isotope { mass_number: 46, name: None, natural_abundance: Some(0.00004), half_life_s: None },
+            Isotope { mass_number: 48, name: None, natural_abundance: Some(0.00187), half_life_s: None },
+        ],
+        26 => vec![ // Iron
+            Isotope { mass_number: 54, name: None, natural_abundance: Some(0.05845), half_life_s: None },
+            Isotope { mass_number: 56, name: None, natural_abundance: Some(0.91754), half_life_s: None },
+            Isotope { mass_number: 57, name: None, natural_abundance: Some(0.02119), half_life_s: None },
+            Isotope { mass_number: 58, name: None, natural_abundance: Some(0.00282), half_life_s: None },
+        ],
+        29 => vec![ // Copper
+            Isotope { mass_number: 63, name: None, natural_abundance: Some(0.6915), half_life_s: None },
+            Isotope { mass_number: 65, name: None, natural_abundance: Some(0.3085), half_life_s: None },
+        ],
+        35 => vec![ // Bromine
+            Isotope { mass_number: 79, name: None, natural_abundance: Some(0.5069), half_life_s: None },
+            Isotope { mass_number: 81, name: None, natural_abundance: Some(0.4931), half_life_s: None },
+        ],
+        36 => vec![ // Krypton
+            Isotope { mass_number: 78, name: None, natural_abundance: Some(0.00355), half_life_s: None },
+            Isotope { mass_number: 80, name: None, natural_abundance: Some(0.02286), half_life_s: None },
+            Isotope { mass_number: 82, name: None, natural_abundance: Some(0.11593), half_life_s: None },
+            Isotope { mass_number: 83, name: None, natural_abundance: Some(0.11500), half_life_s: None },
+            Isotope { mass_number: 84, name: None, natural_abundance: Some(0.56987), half_life_s: None },
+            Isotope { mass_number: 86, name: None, natural_abundance: Some(0.17279), half_life_s: None },
+        ],
+        38 => vec![ // Strontium
+            Isotope { mass_number: 84, name: None, natural_abundance: Some(0.0056), half_life_s: None },
+            Isotope { mass_number: 86, name: None, natural_abundance: Some(0.0986), half_life_s: None },
+            Isotope { mass_number: 87, name: None, natural_abundance: Some(0.0700), half_life_s: None },
+            Isotope { mass_number: 88, name: None, natural_abundance: Some(0.8258), half_life_s: None },
+            Isotope { mass_number: 90, name: Some("Strontium-90"), natural_abundance: None, half_life_s: Some(9.096e8) }, // 28.8 yr
+        ],
+        47 => vec![ // Silver
+            Isotope { mass_number: 107, name: None, natural_abundance: Some(0.51839), half_life_s: None },
+            Isotope { mass_number: 109, name: None, natural_abundance: Some(0.48161), half_life_s: None },
+        ],
+        53 => vec![ // Iodine
+            Isotope { mass_number: 127, name: None, natural_abundance: Some(1.0), half_life_s: None },
+            Isotope { mass_number: 131, name: Some("Iodine-131"), natural_abundance: None, half_life_s: Some(692_748.0) }, // 8.02 days
+        ],
+        54 => vec![ // Xenon
+            Isotope { mass_number: 124, name: None, natural_abundance: Some(0.000952), half_life_s: None },
+            Isotope { mass_number: 126, name: None, natural_abundance: Some(0.000890), half_life_s: None },
+            Isotope { mass_number: 128, name: None, natural_abundance: Some(0.019102), half_life_s: None },
+            Isotope { mass_number: 129, name: None, natural_abundance: Some(0.264006), half_life_s: None },
+            Isotope { mass_number: 130, name: None, natural_abundance: Some(0.040710), half_life_s: None },
+            Isotope { mass_number: 131, name: None, natural_abundance: Some(0.212324), half_life_s: None },
+            Isotope { mass_number: 132, name: None, natural_abundance: Some(0.269086), half_life_s: None },
+            Isotope { mass_number: 134, name: None, natural_abundance: Some(0.104357), half_life_s: None },
+            Isotope { mass_number: 136, name: None, natural_abundance: Some(0.088573), half_life_s: None },
+        ],
+        56 => vec![ // Barium
+            Isotope { mass_number: 130, name: None, natural_abundance: Some(0.00106), half_life_s: None },
+            Isotope { mass_number: 132, name: None, natural_abundance: Some(0.00101), half_life_s: None },
+            Isotope { mass_number: 134, name: None, natural_abundance: Some(0.02417), half_life_s: None },
+            Isotope { mass_number: 135, name: None, natural_abundance: Some(0.06592), half_life_s: None },
+            Isotope { mass_number: 136, name: None, natural_abundance: Some(0.07854), half_life_s: None },
+            Isotope { mass_number: 137, name: None, natural_abundance: Some(0.11232), half_life_s: None },
+            Isotope { mass_number: 138, name: None, natural_abundance: Some(0.71698), half_life_s: None },
+        ],
+        82 => vec![ // Lead
+            Isotope { mass_number: 204, name: None, natural_abundance: Some(0.014), half_life_s: None },
+            Isotope { mass_number: 206, name: None, natural_abundance: Some(0.241), half_life_s: None },
+            Isotope { mass_number: 207, name: None, natural_abundance: Some(0.221), half_life_s: None },
+            Isotope { mass_number: 208, name: None, natural_abundance: Some(0.524), half_life_s: None },
+        ],
+        86 => vec![ // Radon
+            Isotope { mass_number: 222, name: Some("Radon-222"), natural_abundance: None, half_life_s: Some(330_350.0) }, // 3.82 days
+        ],
+        88 => vec![ // Radium
+            Isotope { mass_number: 226, name: Some("Radium-226"), natural_abundance: None, half_life_s: Some(5.058e10) }, // 1603 yr
+        ],
+        90 => vec![ // Thorium
+            Isotope { mass_number: 230, name: None, natural_abundance: Some(0.0002), half_life_s: Some(2.376e12) }, // 75,380 yr
+            Isotope { mass_number: 232, name: Some("Thorium-232"), natural_abundance: Some(0.9998), half_life_s: Some(4.42e17) }, // 14.0 Gyr
+        ],
+        92 => vec![ // Uranium
+            Isotope { mass_number: 234, name: None, natural_abundance: Some(0.000054), half_life_s: Some(7.748e12) }, // 245,500 yr
+            Isotope { mass_number: 235, name: Some("Uranium-235"), natural_abundance: Some(0.007204), half_life_s: Some(2.221e16) }, // 703.8 Myr
+            Isotope { mass_number: 238, name: Some("Uranium-238"), natural_abundance: Some(0.992742), half_life_s: Some(1.410e17) }, // 4.468 Gyr
+        ],
+        94 => vec![ // Plutonium
+            Isotope { mass_number: 238, name: None, natural_abundance: None, half_life_s: Some(2.766e9) }, // 87.7 yr
+            Isotope { mass_number: 239, name: Some("Plutonium-239"), natural_abundance: None, half_life_s: Some(7.610e11) }, // 24,110 yr
+            Isotope { mass_number: 240, name: None, natural_abundance: None, half_life_s: Some(2.071e11) }, // 6,561 yr
+            Isotope { mass_number: 241, name: None, natural_abundance: None, half_life_s: Some(4.52e8) }, // 14.3 yr
+        ],
+        _ => vec![],
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Phase {
     Solid,
@@ -55,6 +271,10 @@ impl Element {
 
     pub fn is_volatile(&self) -> bool {
         matches!(self.boiling_point_k, Some(bp) if bp < 400.0)
+    }
+
+    pub fn isotopes(&self) -> Vec<Isotope> {
+        isotopes_for(self.atomic_number)
     }
 }
 
@@ -188,4 +408,51 @@ pub fn element_by_number(n: u8) -> Option<Element> {
 
 pub fn element_by_symbol(sym: &str) -> Option<Element> {
     periodic_table().into_iter().find(|e| e.symbol == sym)
+}
+
+/// Parse a group from a user-supplied string (case-insensitive, accepts common abbreviations).
+pub fn group_from_str(s: &str) -> Option<Group> {
+    match s.to_lowercase().trim() {
+        "alkali" | "alkali metal" | "alkali metals"                         => Some(Group::AlkaliMetal),
+        "alkaline" | "alkaline earth" | "alkaline earth metal"
+            | "alkaline earth metals" | "alkaline-earth" | "alkaline-earth metal" => Some(Group::AlkalineEarthMetal),
+        "transition" | "transition metal" | "transition metals"             => Some(Group::TransitionMetal),
+        "post-transition" | "post transition" | "post-transition metal"
+            | "post transition metal" | "post-transition metals"
+            | "post transition metals" | "poor metal" | "poor metals"       => Some(Group::PostTransitionMetal),
+        "metalloid" | "metalloids" | "semimetal" | "semimetals"             => Some(Group::Metalloid),
+        "nonmetal" | "nonmetals" | "non-metal" | "non-metals"
+            | "reactive nonmetal" | "reactive nonmetals"
+            | "reactive non-metal" | "reactive non-metals"                  => Some(Group::ReactiveNonmetal),
+        "noble" | "noble gas" | "noble gases" | "inert gas" | "inert gases" => Some(Group::NobleGas),
+        "lanthanide" | "lanthanides" | "lanthanoid" | "lanthanoids"
+            | "rare earth" | "rare earths"                                  => Some(Group::Lanthanide),
+        "actinide" | "actinides" | "actinoid" | "actinoids"                 => Some(Group::Actinide),
+        "unknown"                                                            => Some(Group::Unknown),
+        _                                                                    => None,
+    }
+}
+
+pub fn elements_by_group(group: Group) -> Vec<Element> {
+    periodic_table().into_iter().filter(|e| e.group == group).collect()
+}
+
+pub fn element_by_name(name: &str) -> Option<Element> {
+    let lower = name.to_lowercase();
+    periodic_table().into_iter().find(|e| e.name.to_lowercase() == lower)
+}
+
+/// Search all isotope names (case-insensitive). Returns the parent element and the matched isotope.
+pub fn isotope_by_name(name: &str) -> Option<(Element, Isotope)> {
+    let lower = name.to_lowercase();
+    for element in periodic_table() {
+        for iso in isotopes_for(element.atomic_number) {
+            if let Some(iso_name) = iso.name {
+                if iso_name.to_lowercase() == lower {
+                    return Some((element, iso));
+                }
+            }
+        }
+    }
+    None
 }

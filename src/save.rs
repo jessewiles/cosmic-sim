@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use crate::player::state::PlayerState;
 use crate::player::ship::Ship;
 use crate::player::inventory::Inventory;
+use crate::player::tech::TechSet;
 use crate::universe::galaxy::{Galaxy, GalaxyMode};
 use crate::universe::system::StarSystem;
 
@@ -42,6 +43,12 @@ pub struct SavedGame {
     pub inventory: Inventory,
     pub galaxy: Galaxy,
     pub current_system: StarSystem,
+    #[serde(default)]
+    pub tech: TechSet,
+    #[serde(default)]
+    pub inbox: Vec<crate::CompanionMessage>,
+    #[serde(default)]
+    pub triggers_fired: std::collections::HashSet<String>,
 }
 
 impl SavedGame {
@@ -52,12 +59,15 @@ impl SavedGame {
         inventory: Inventory,
         galaxy: Galaxy,
         current_system: StarSystem,
+        tech: TechSet,
+        inbox: Vec<crate::CompanionMessage>,
+        triggers_fired: std::collections::HashSet<String>,
     ) -> Self {
         let saved_at = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
-        SavedGame { slot, saved_at, player, ship, inventory, galaxy, current_system }
+        SavedGame { slot, saved_at, player, ship, inventory, galaxy, current_system, tech, inbox, triggers_fired }
     }
 
     /// Human-readable timestamp, e.g. "2024-03-21 14:05".

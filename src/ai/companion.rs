@@ -1,3 +1,4 @@
+use std::path::Path;
 use crate::ai::computer::ShipComputer;
 
 pub struct Companion {
@@ -18,6 +19,27 @@ impl Companion {
         personality: &'static str,
     ) -> Self {
         Companion { name, ship_name, pronoun, specialty, personality, computer: ShipComputer::new() }
+    }
+}
+
+/// Log file slug for a companion name, e.g. "Dr. Yael Orin" → "yael_orin".
+fn log_slug(name: &str) -> String {
+    name.to_lowercase()
+        .split_whitespace()
+        .last()
+        .unwrap_or(name)
+        .chars()
+        .map(|c| if c.is_alphanumeric() { c } else { '_' })
+        .collect()
+}
+
+/// Attach persistent log files to each companion's computer.
+/// Call this once after constructing companions, passing the data directory.
+pub fn attach_logs(companions: &mut Vec<Companion>, data_dir: &Path) {
+    let logs_dir = data_dir.join("logs");
+    for c in companions.iter_mut() {
+        let path = logs_dir.join(format!("{}.json", log_slug(c.name)));
+        c.computer = ShipComputer::with_log(path);
     }
 }
 

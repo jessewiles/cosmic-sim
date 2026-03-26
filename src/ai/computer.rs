@@ -1,17 +1,17 @@
 use serde::{Deserialize, Serialize};
 use std::env;
+use std::path::PathBuf;
 use std::time::Duration;
 
-/// Maximum number of back-and-forth exchanges kept in context.
-/// Each exchange = 1 user message + 1 assistant message.
-const MAX_EXCHANGES: usize = 20;
+/// Exchanges sent to the API per call. Full history is stored on disk.
+const MAX_CONTEXT_EXCHANGES: usize = 6;
 
 // ── API request / response types ────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct Message {
-    role: String,
-    content: String,
+pub struct Message {
+    pub role: String,
+    pub content: String,
 }
 
 #[derive(Serialize)]
@@ -38,7 +38,12 @@ struct ContentBlock {
 // ── ShipComputer ─────────────────────────────────────────────────────────────
 
 pub struct ShipComputer {
+    /// Sliding context window sent to the API (capped at MAX_CONTEXT_EXCHANGES).
     history: Vec<Message>,
+    /// Complete exchange log — persisted to disk, never trimmed in memory.
+    full_log: Vec<Message>,
+    /// Where the log is written. None for ephemeral instances (e.g. ARIA).
+    log_path: Option<PathBuf>,
     client: reqwest::blocking::Client,
 }
 
@@ -48,7 +53,50 @@ impl ShipComputer {
             .timeout(Duration::from_secs(60))
             .build()
             .expect("Failed to build HTTP client");
-        ShipComputer { history: vec![], client }
+        ShipComputer { history: vec![], full_log: vec![], log_path: None, client }
+    }
+
+    /// Create a computer backed by a persistent log file.
+    /// If the file exists, the recent exchanges are loaded into the context window.
+    pub fn with_log(path: PathBuf) -> Self {
+        let mut computer = Self::new();
+        computer.log_path = Some(path.clone());
+
+        if let Ok(data) = std::fs::read_to_string(&path) {
+            if let Ok(log) = serde_json::from_str::<Vec<Message>>(&data) {
+                computer.full_log = log;
+                let start = computer.full_log.len()
+                    .saturating_sub(MAX_CONTEXT_EXCHANGES * 2);
+                computer.history = computer.full_log[start..].to_vec();
+            }
+        }
+        computer
+    }
+
+    fn save_log(&self) {
+        let Some(path) = &self.log_path else { return };
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        if let Ok(json) = serde_json::to_string_pretty(&self.full_log) {
+            let _ = std::fs::write(path, json);
+        }
+    }
+
+    /// All messages ever exchanged, oldest first.
+    pub fn full_log(&self) -> &[Message] {
+        &self.full_log
+    }
+
+    /// The last `n` exchanges (2*n messages) from the full log.
+    pub fn recent_log(&self, n_exchanges: usize) -> &[Message] {
+        let start = self.full_log.len().saturating_sub(n_exchanges * 2);
+        &self.full_log[start..]
+    }
+
+    /// Number of complete exchanges (user + assistant pairs) in the full log.
+    pub fn exchange_count(&self) -> usize {
+        self.full_log.len() / 2
     }
 
     /// Send a message to Claude. Returns the assistant's reply or an error string.
@@ -57,13 +105,11 @@ impl ShipComputer {
         let api_key = env::var("ANTHROPIC_API_KEY")
             .map_err(|_| "ANTHROPIC_API_KEY is not set".to_string())?;
 
-        self.history.push(Message {
-            role: "user".to_string(),
-            content: user_message.to_string(),
-        });
+        let user_msg = Message { role: "user".to_string(), content: user_message.to_string() };
+        self.history.push(user_msg.clone());
+        self.full_log.push(user_msg);
 
-        // Trim history: keep at most MAX_EXCHANGES exchanges (pairs of messages)
-        let max_msgs = MAX_EXCHANGES * 2;
+        let max_msgs = MAX_CONTEXT_EXCHANGES * 2;
         if self.history.len() > max_msgs {
             self.history.drain(..self.history.len() - max_msgs);
         }
@@ -97,8 +143,8 @@ impl ShipComputer {
                 .ok()
                 .and_then(|v| v["error"]["message"].as_str().map(|s| s.to_string()))
                 .unwrap_or_else(|| format!("HTTP {}", status));
-            // Remove the user message we just added since it failed
             self.history.pop();
+            self.full_log.pop();
             return Err(msg);
         }
 
@@ -110,10 +156,10 @@ impl ShipComputer {
             .and_then(|b| b.text.clone())
             .ok_or_else(|| "No text content in response".to_string())?;
 
-        self.history.push(Message {
-            role: "assistant".to_string(),
-            content: content.clone(),
-        });
+        let asst_msg = Message { role: "assistant".to_string(), content: content.clone() };
+        self.history.push(asst_msg.clone());
+        self.full_log.push(asst_msg);
+        self.save_log();
 
         Ok(content)
     }
@@ -134,12 +180,11 @@ impl ShipComputer {
         let api_key = env::var("ANTHROPIC_API_KEY")
             .map_err(|_| "ANTHROPIC_API_KEY is not set".to_string())?;
 
-        self.history.push(Message {
-            role: "user".to_string(),
-            content: user_message.to_string(),
-        });
+        let user_msg = Message { role: "user".to_string(), content: user_message.to_string() };
+        self.history.push(user_msg.clone());
+        self.full_log.push(user_msg);
 
-        let max_msgs = MAX_EXCHANGES * 2;
+        let max_msgs = MAX_CONTEXT_EXCHANGES * 2;
         if self.history.len() > max_msgs {
             self.history.drain(..self.history.len() - max_msgs);
         }
@@ -172,6 +217,7 @@ impl ShipComputer {
                 .and_then(|v| v["error"]["message"].as_str().map(|s| s.to_string()))
                 .unwrap_or_else(|| format!("HTTP {}", status));
             self.history.pop();
+            self.full_log.pop();
             return Err(msg);
         }
 
@@ -194,19 +240,17 @@ impl ShipComputer {
             }
         }
 
-        self.history.push(Message {
-            role: "assistant".to_string(),
-            content: full_text.clone(),
-        });
+        let asst_msg = Message { role: "assistant".to_string(), content: full_text.clone() };
+        self.history.push(asst_msg.clone());
+        self.full_log.push(asst_msg);
+        self.save_log();
 
         Ok(full_text)
     }
 
     pub fn clear_history(&mut self) {
         self.history.clear();
-    }
-
-    pub fn exchange_count(&self) -> usize {
-        self.history.len() / 2
+        self.full_log.clear();
+        self.save_log();
     }
 }
