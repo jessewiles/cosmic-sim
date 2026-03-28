@@ -874,7 +874,7 @@ fn game_loop(gs: &mut GameState) {
                 unread, if unread == 1 { "" } else { "s" }, from);
             println!();
         }
-        println!("  {DIM}Objective: mine He-3 and D · refine fuel pellets via [r] in ship status · travel further{R}");
+        println!("  {DIM}Objective: mine He-3 and D · refine pellets [r] · load into tank [l] · travel further{R}");
         println!();
         println!("  What would you like to do?");
         if let Some(idx) = gs.player.landed_on {
@@ -1480,12 +1480,13 @@ fn do_mining(gs: &mut GameState, idx: usize) {
     println!();
     let he3_have = gs.inventory.amount("He-3");
     let d_have   = gs.inventory.amount("D");
-    let max_pellets = (he3_have / 100.0).min(d_have / 100.0).floor() as u32;
-    println!("  {DIM}Cargo  — He-3: {:.0}g  |  D: {:.0}g  |  Cargo used: {:.0}/{:.0}g{R}",
-        he3_have, d_have,
+    let can_refine = (he3_have / 100.0).min(d_have / 100.0).floor() as u32;
+    println!("  {DIM}Cargo  — He-3: {:.0}g  |  D: {:.0}g  |  Pellets: {}  |  Cargo used: {:.0}/{:.0}g{R}",
+        he3_have, d_have, gs.inventory.pellets,
         gs.inventory.total_mass_g(), gs.inventory.capacity_g);
-    if max_pellets > 0 {
-        println!("  {DIM}Refine {max_pellets} pellets ready — use [r] in ship status{R}");
+    if can_refine > 0 {
+        println!("  {DIM}Refine {can_refine} more pellet{} — use [r] in ship status{R}",
+            if can_refine == 1 { "" } else { "s" });
     }
     pause();
 }
@@ -1511,14 +1512,25 @@ fn ship_status(gs: &mut GameState) {
             println!("  {:>4}  {:.2} g", sym, mass);
         }
     }
+    if gs.inventory.pellets > 0 {
+        println!("  {:>4}  {} pellet{}", "⬡", gs.inventory.pellets,
+            if gs.inventory.pellets == 1 { "" } else { "s" });
+    }
 
     let he3 = gs.inventory.amount("He-3");
     let d   = gs.inventory.amount("D");
     let can_refine = (he3 / 100.0).min(d / 100.0).floor() as u32;
+    let can_load   = gs.inventory.pellets > 0 && gs.ship.fuel < gs.ship.max_fuel;
+    println!();
     if can_refine > 0 {
-        println!();
-        println!("  {BYELLOW}[r] Refine fuel pellets{R}  {DIM}({can_refine} pellet{} ready — 100g He-3 + 100g D each){R}",
+        println!("  {BYELLOW}[r] Refine fuel pellets{R}  {DIM}({can_refine} pellet{} — 100g He-3 + 100g D each){R}",
             if can_refine == 1 { "" } else { "s" });
+    }
+    if can_load {
+        let tank_space = (gs.ship.max_fuel - gs.ship.fuel).max(0.0).floor() as u32;
+        let loadable = gs.inventory.pellets.min(tank_space);
+        println!("  {BYELLOW}[l] Load pellets{R}  {DIM}({} pellet{} → +{loadable} fuel){R}",
+            gs.inventory.pellets, if gs.inventory.pellets == 1 { "" } else { "s" });
     }
 
     println!();
@@ -1528,6 +1540,8 @@ fn ship_status(gs: &mut GameState) {
     match choice.trim() {
         "r" if can_refine > 0 => do_refining(gs),
         "r" => { println!("  Not enough He-3 and D to refine. (Need 100g of each per pellet.)"); pause(); }
+        "l" if can_load => do_loading(gs),
+        "l" => { println!("  Nothing to load."); pause(); }
         _ => break,
     }
     } // end loop
@@ -1538,7 +1552,7 @@ fn do_refining(gs: &mut GameState) {
     let d   = gs.inventory.amount("D");
     let pellets = (he3 / 100.0).min(d / 100.0).floor() as u32;
     if pellets == 0 {
-        println!("  Nothing to refine.");
+        println!("  Nothing to refine. (Need 100g He-3 + 100g D per pellet.)");
         pause();
         return;
     }
@@ -1546,19 +1560,44 @@ fn do_refining(gs: &mut GameState) {
     let d_used   = pellets as f64 * 100.0;
     gs.inventory.remove("He-3", he3_used);
     gs.inventory.remove("D", d_used);
-    let fuel_before = gs.ship.fuel;
-    gs.ship.fuel = (gs.ship.fuel + pellets as f64).min(gs.ship.max_fuel);
-    let gained = gs.ship.fuel - fuel_before;
+    gs.inventory.pellets += pellets;
     println!();
     println!("  {DIM}Initiating fusion pellet compaction...{R}");
     println!();
     println!("  He-3 consumed : {BRED}-{:.0}g{R}", he3_used);
     println!("  D    consumed : {BRED}-{:.0}g{R}", d_used);
     println!("  Pellets forged: {BGREEN}+{} pellet{}{R}", pellets, if pellets == 1 { "" } else { "s" });
+    println!("  Pellets in cargo: {}", gs.inventory.pellets);
+    println!();
+    println!("  {DIM}Use [l] to load pellets into the fuel tank.{R}");
+    pause();
+}
+
+fn do_loading(gs: &mut GameState) {
+    if gs.inventory.pellets == 0 {
+        println!("  No pellets in cargo.");
+        pause();
+        return;
+    }
+    let tank_space = (gs.ship.max_fuel - gs.ship.fuel).max(0.0).floor() as u32;
+    if tank_space == 0 {
+        println!("  Fuel tank is full.");
+        pause();
+        return;
+    }
+    let load = gs.inventory.pellets.min(tank_space);
+    gs.inventory.pellets -= load;
+    let fuel_before = gs.ship.fuel;
+    gs.ship.fuel = (gs.ship.fuel + load as f64).min(gs.ship.max_fuel);
+    println!();
+    println!("  {DIM}Loading pellets into reactor feed...{R}");
+    println!();
+    println!("  Pellets loaded: {BGREEN}+{load}{R}");
     println!("  Fuel level    : {:.1} → {BGREEN}{:.1}{R} / {:.1}",
         fuel_before, gs.ship.fuel, gs.ship.max_fuel);
-    if gained < pellets as f64 {
-        println!("  {DIM}(Tank capped — {:.0} pellet worth discarded){R}", pellets as f64 - gained);
+    if gs.inventory.pellets > 0 {
+        println!("  {DIM}({} pellet{} remaining in cargo){R}",
+            gs.inventory.pellets, if gs.inventory.pellets == 1 { "" } else { "s" });
     }
     pause();
 }
@@ -1918,7 +1957,7 @@ fn build_companion_system_prompt(companion: &Companion, gs: &GameState) -> Strin
     let fuel_pct = gs.ship.fuel / gs.ship.max_fuel * 100.0;
     let he3_g    = gs.inventory.amount("He-3");
     let d_g      = gs.inventory.amount("D");
-    let pellets_ready = (he3_g / 100.0).min(d_g / 100.0).floor() as u32;
+    let pellets_ready = gs.inventory.pellets;
 
     format!(
         "{personality}\n\n\
@@ -1937,7 +1976,7 @@ PERIHELION I STATUS (the player's ship):\n\
   Hull          : {hull:.0}%\n\
   He-3 cargo    : {he3:.0} g\n\
   Deuterium     : {d:.0} g\n\
-  Pellets ready : {pellets}\n\n\
+  Pellets (cargo): {pellets}\n\n\
 The player's ship is Perihelion I. Your ship is {ship}. \
 The third ship is {other_ship}, crewed by {other_name}.",
         personality  = companion.personality,

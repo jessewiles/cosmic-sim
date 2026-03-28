@@ -6,11 +6,15 @@ pub struct Inventory {
     /// resource symbol → amount in grams
     pub elements: HashMap<String, f64>,
     pub capacity_g: f64,
+    /// Refined fusion pellets stored in cargo (100g He-3 + 100g D each).
+    /// Not counted toward cargo mass — they're dense, compacted objects.
+    #[serde(default)]
+    pub pellets: u32,
 }
 
 impl Inventory {
     pub fn new(capacity_g: f64) -> Self {
-        Inventory { elements: HashMap::new(), capacity_g }
+        Inventory { elements: HashMap::new(), capacity_g, pellets: 0 }
     }
 
     pub fn total_mass_g(&self) -> f64 {
