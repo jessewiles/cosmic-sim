@@ -581,6 +581,7 @@ fn travel_tick(gs: &mut GameState) {
                 println!("  {BRED}HULL FAILURE. The Perihelion I is destroyed.{R}");
                 println!("  {DIM}The stars continue without you.{R}");
                 pause();
+                let _ = save::save_ended(&gs.to_save());
                 std::process::exit(0);
             }
             println!();
@@ -1088,6 +1089,7 @@ fn land_menu(gs: &mut GameState) {
                         println!("  {BRED}Hull integrity lost. The Perihelion I is gone.{R}");
                         println!("  {DIM}Yael and Reza receive no signal.{R}");
                         pause();
+                        let _ = save::save_ended(&gs.to_save());
                         std::process::exit(0);
                     }
                     pause();
@@ -1120,6 +1122,7 @@ fn inspect_planet(gs: &mut GameState, idx: usize) {
             println!("  {DIM}Your pattern dissolves into noise.{R}");
             println!();
             pause();
+            let _ = save::save_ended(&gs.to_save());
             std::process::exit(0);
         }
     }

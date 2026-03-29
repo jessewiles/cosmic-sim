@@ -51,6 +51,10 @@ pub struct SavedGame {
     pub triggers_fired: std::collections::HashSet<String>,
     #[serde(default)]
     pub objective: Option<String>,
+    /// True once the game has ended (death or victory). Ended saves are hidden
+    /// from the load screen so they don't clutter the slot list.
+    #[serde(default)]
+    pub ended: bool,
 }
 
 impl SavedGame {
@@ -70,7 +74,7 @@ impl SavedGame {
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
-        SavedGame { slot, saved_at, player, ship, inventory, galaxy, current_system, tech, inbox, triggers_fired, objective }
+        SavedGame { slot, saved_at, player, ship, inventory, galaxy, current_system, tech, inbox, triggers_fired, objective, ended: false }
     }
 
     /// Human-readable timestamp, e.g. "2024-03-21 14:05".
@@ -104,6 +108,13 @@ fn days_to_ymd(days: u64) -> (u64, u64, u64) {
 
 // ── Save / Load ───────────────────────────────────────────────────────────────
 
+/// Write a save file and mark it as ended so it won't appear on the load screen.
+pub fn save_ended(game: &SavedGame) -> io::Result<()> {
+    let mut ended = game.clone();
+    ended.ended = true;
+    save(&ended)
+}
+
 pub fn save(game: &SavedGame) -> io::Result<()> {
     ensure_dirs()?;
     let path = saves_dir().join(format!("{}.json", sanitize_slot(&game.slot)));
@@ -136,6 +147,7 @@ pub fn list_saves() -> Vec<SavedGame> {
         })
         .collect();
 
+    saves.retain(|s| !s.ended);
     saves.sort_by(|a, b| b.saved_at.cmp(&a.saved_at));
     saves
 }
