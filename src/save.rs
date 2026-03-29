@@ -49,6 +49,8 @@ pub struct SavedGame {
     pub inbox: Vec<crate::CompanionMessage>,
     #[serde(default)]
     pub triggers_fired: std::collections::HashSet<String>,
+    #[serde(default)]
+    pub objective: Option<String>,
 }
 
 impl SavedGame {
@@ -62,12 +64,13 @@ impl SavedGame {
         tech: TechSet,
         inbox: Vec<crate::CompanionMessage>,
         triggers_fired: std::collections::HashSet<String>,
+        objective: Option<String>,
     ) -> Self {
         let saved_at = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
-        SavedGame { slot, saved_at, player, ship, inventory, galaxy, current_system, tech, inbox, triggers_fired }
+        SavedGame { slot, saved_at, player, ship, inventory, galaxy, current_system, tech, inbox, triggers_fired, objective }
     }
 
     /// Human-readable timestamp, e.g. "2024-03-21 14:05".

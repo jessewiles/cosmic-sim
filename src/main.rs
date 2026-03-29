@@ -22,6 +22,7 @@ use ui::terminal::*;
 use ui::display::separator;
 use ai::computer::ShipComputer;
 use ai::companion::{Companion, default_companions, attach_logs};
+use ai::effects::{GameEffect, parse_effects, describe_effect, effect_instructions};
 
 /// Transient state tracking an in-progress interstellar journey.
 /// Not serialised — on reload the player is considered arrived.
@@ -77,6 +78,8 @@ struct GameState {
     triggers_fired: std::collections::HashSet<String>,
     /// Some(_) while an interstellar journey is underway.
     travel: Option<ActiveTravel>,
+    /// Current mission objective, may be set/updated by ARIA or companions.
+    objective: Option<String>,
 }
 
 impl GameState {
@@ -102,6 +105,7 @@ impl GameState {
             inbox: Vec::new(),
             triggers_fired: std::collections::HashSet::new(),
             travel: None,
+            objective: None,
         }
     }
 
@@ -122,6 +126,7 @@ impl GameState {
             inbox: s.inbox.clone(),
             triggers_fired: s.triggers_fired.clone(),
             travel: None,
+            objective: s.objective.clone(),
         }
     }
 
@@ -136,6 +141,7 @@ impl GameState {
             self.tech.clone(),
             self.inbox.clone(),
             self.triggers_fired.clone(),
+            self.objective.clone(),
         )
     }
 }
@@ -874,7 +880,11 @@ fn game_loop(gs: &mut GameState) {
                 unread, if unread == 1 { "" } else { "s" }, from);
             println!();
         }
-        println!("  {DIM}Objective: mine He-3 and D · refine pellets [r] · load into tank [l] · travel further{R}");
+        if let Some(obj) = &gs.objective {
+            println!("  {BYELLOW}▶ Objective:{R} {}", obj);
+        } else {
+            println!("  {DIM}Objective: mine He-3 and D · refine pellets [r] · load into tank [l] · travel further{R}");
+        }
         println!();
         println!("  What would you like to do?");
         if let Some(idx) = gs.player.landed_on {
@@ -1834,6 +1844,69 @@ fn relativistic_status(gs: &GameState) {
 
 /// Build the system prompt injected into every ARIA request.
 /// This gives Claude real-time context about where the player is and what they're seeing.
+/// Apply a parsed game effect to the current game state.
+/// Returns false if the effect couldn't be applied (e.g. insufficient resources).
+fn apply_game_effect(gs: &mut GameState, effect: &GameEffect) -> bool {
+    match effect {
+        GameEffect::SetObjective { text } => {
+            gs.objective = Some(text.clone());
+            true
+        }
+        GameEffect::TransferResource { resource, amount_g, to_player } => {
+            if *to_player {
+                let space = gs.inventory.capacity_g - gs.inventory.total_mass_g();
+                let actual = amount_g.min(space).max(0.0);
+                if actual > 0.0 {
+                    gs.inventory.add(resource, actual);
+                    true
+                } else {
+                    false
+                }
+            } else {
+                let have = gs.inventory.amount(resource);
+                let actual = amount_g.min(have).max(0.0);
+                if actual > 0.0 {
+                    gs.inventory.remove(resource, actual);
+                    true
+                } else {
+                    false
+                }
+            }
+        }
+        GameEffect::TransferFuel { amount, to_player } => {
+            if *to_player {
+                let space = gs.ship.max_fuel - gs.ship.fuel;
+                let actual = amount.min(space).max(0.0);
+                if actual > 0.0 {
+                    gs.ship.fuel += actual;
+                    true
+                } else {
+                    false
+                }
+            } else {
+                let actual = amount.min(gs.ship.fuel).max(0.0);
+                if actual > 0.0 {
+                    gs.ship.fuel -= actual;
+                    true
+                } else {
+                    false
+                }
+            }
+        }
+        GameEffect::TransferPellets { count, to_player } => {
+            if *to_player {
+                gs.inventory.pellets += count;
+                true
+            } else if gs.inventory.pellets >= *count {
+                gs.inventory.pellets -= count;
+                true
+            } else {
+                false
+            }
+        }
+    }
+}
+
 fn build_aria_system_prompt(gs: &GameState) -> String {
     let sys = &gs.current_system;
     let star = &sys.star;
@@ -1913,7 +1986,8 @@ GUIDELINES:\n\
   - Use real values and equations when helpful (e.g. γ = 1/√(1−v²/c²))\n\
   - When discussing elements or compounds, connect them to real periodic-table properties\n\
   - Be concise: 2–4 short paragraphs unless a deep dive is explicitly requested\n\
-  - If a question is ambiguous, answer the most physically interesting interpretation",
+  - If a question is ambiguous, answer the most physically interesting interpretation{}",
+        effect_instructions("aria"),
         name  = sys.name,
         cls   = star.spectral_class.display(),
         temp  = star.temperature_k,
@@ -1978,7 +2052,7 @@ PERIHELION I STATUS (the player's ship):\n\
   Deuterium     : {d:.0} g\n\
   Pellets (cargo): {pellets}\n\n\
 The player's ship is Perihelion I. Your ship is {ship}. \
-The third ship is {other_ship}, crewed by {other_name}.",
+The third ship is {other_ship}, crewed by {other_name}.{effects}",
         personality  = companion.personality,
         name     = sys.name,
         cls      = star.spectral_class.display(),
@@ -1998,6 +2072,7 @@ The third ship is {other_ship}, crewed by {other_name}.",
         ship   = companion.ship_name,
         other_ship = if companion.ship_name == "Threshold" { "Sable" } else { "Threshold" },
         other_name = if companion.ship_name == "Threshold" { "Reza Terani" } else { "Dr. Yael Orin" },
+        effects    = effect_instructions("companion"),
     )
 }
 
@@ -2076,15 +2151,20 @@ fn group_chat(gs: &mut GameState) {
 
             match result {
                 Ok(full_text) => {
+                    let (clean_text, effects) = parse_effects(&full_text);
                     use termimad::crossterm::style::Color as TC;
                     let mut skin = termimad::MadSkin::default();
                     skin.bold.set_fg(TC::Yellow);
                     skin.italic.set_fg(TC::Magenta);
                     for h in &mut skin.headers { h.set_fg(TC::Cyan); }
                     skin.inline_code.set_fg(TC::Green);
-                    let _ = full_text; // already streamed
-                    skin.print_text(&gs.companions[idx].computer.full_log().last()
-                        .map(|m| m.content.as_str()).unwrap_or(""));
+                    skin.print_text(&clean_text);
+                    for effect in &effects {
+                        let companion_name = gs.companions[idx].name;
+                        if apply_game_effect(gs, effect) {
+                            println!("  {BGREEN}▶ {}{R}", describe_effect(effect, companion_name));
+                        }
+                    }
                 }
                 Err(e) => {
                     println!("  {BRED}[comms error: {}]{R}", e);
@@ -2287,13 +2367,19 @@ fn companion_chat(gs: &mut GameState, idx: usize) {
 
         match result {
             Ok(full_text) => {
+                let (clean_text, effects) = parse_effects(&full_text);
                 use termimad::crossterm::style::Color as TC;
                 let mut skin = termimad::MadSkin::default();
                 skin.bold.set_fg(TC::Yellow);
                 skin.italic.set_fg(TC::Magenta);
                 for h in &mut skin.headers { h.set_fg(TC::Cyan); }
                 skin.inline_code.set_fg(TC::Green);
-                skin.print_text(&full_text);
+                skin.print_text(&clean_text);
+                for effect in &effects {
+                    if apply_game_effect(gs, effect) {
+                        println!("  {BGREEN}▶ {}{R}", describe_effect(effect, name));
+                    }
+                }
             }
             Err(e) => {
                 println!("  {BRED}[comms error: {}]{R}", e);
@@ -2381,6 +2467,7 @@ fn aria_chat(gs: &mut GameState) {
 
         match result {
             Ok(full_text) => {
+                let (clean_text, effects) = parse_effects(&full_text);
                 use termimad::crossterm::style::Color as TC;
                 let mut skin = termimad::MadSkin::default();
                 skin.bold.set_fg(TC::Yellow);
@@ -2389,7 +2476,12 @@ fn aria_chat(gs: &mut GameState) {
                     h.set_fg(TC::Cyan);
                 }
                 skin.inline_code.set_fg(TC::Green);
-                skin.print_text(&full_text);
+                skin.print_text(&clean_text);
+                for effect in &effects {
+                    if apply_game_effect(gs, effect) {
+                        println!("  {BGREEN}▶ {}{R}", describe_effect(effect, "ARIA"));
+                    }
+                }
             }
             Err(e) => {
                 println!("  {BRED}[offline: {}]{R}", e);
