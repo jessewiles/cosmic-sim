@@ -383,14 +383,12 @@ fn send_note(gs: &GameState) {
     }
 
     println!("  {DIM}Current system: {}{R}", gs.current_system.name);
-    println!("  {DIM}Note will be tagged: cosmic-sim{R}");
+    println!("  {DIM}Note will be tagged: cosmic-sim  ·  empty note to cancel{R}");
     println!();
 
     let body = prompt("  Note: ");
     let body = body.trim();
     if body.is_empty() {
-        println!("\n  No note sent.");
-        pause();
         return;
     }
 
@@ -419,7 +417,7 @@ fn universal(choice: &str, gs: &mut GameState, help: &str) -> bool {
             aria_chat(gs);
             true
         }
-        "n" | "N" => {
+        "p" | "P" => {
             send_note(gs);
             true
         }
@@ -831,6 +829,55 @@ I'm glad there are still oceans in the universe.
 
 — Yael");
     }
+
+    // ── Stuck with no fuel and no safe mining — reveal atmospheric scooping ──
+    {
+        use universe::planet::{PlanetType, InfraRisk};
+        let critically_low = gs.ship.fuel < 5.0;
+        let already_unlocked = gs.tech.has("atmo_scoop");
+        let already_sent = gs.triggers_fired.contains("msg_atmo_scoop_hint");
+
+        if critically_low && !already_unlocked && !already_sent {
+            // Check: is there a scoop-eligible planet here?
+            let has_scoop_target = gs.current_system.planets.iter().any(|p| {
+                matches!(p.planet_type, PlanetType::GasGiant | PlanetType::IceGiant | PlanetType::HotJupiter)
+            });
+            // Check: is there no safe planet to mine He-3 from?
+            let has_safe_he3 = gs.current_system.planets.iter().any(|p| {
+                matches!(p.infrastructure_risk(), InfraRisk::Minimal | InfraRisk::Low)
+                && matches!(p.planet_type, PlanetType::GasGiant | PlanetType::IceGiant)
+            });
+            if has_scoop_target && !has_safe_he3 {
+                gs.triggers_fired.insert("msg_atmo_scoop_hint".to_string());
+                gs.tech.unlock("atmo_scoop");
+                let target = gs.current_system.planets.iter()
+                    .find(|p| matches!(p.planet_type, PlanetType::GasGiant | PlanetType::IceGiant | PlanetType::HotJupiter))
+                    .map(|p| p.name.clone())
+                    .unwrap_or_else(|| "the gas giant".to_string());
+                push_message(gs, "Dr. Yael Orin", "There might be a way",
+                    &format!("\
+I've been watching your fuel situation.
+
+I know how it looks. I know what the standard approach says about gas giants — \
+Extreme infrastructure risk, stay well away. But there's a distinction that \
+doesn't get made often enough: surface operations and orbital passes are \
+completely different problems.
+
+The Threshold has been running low-altitude atmospheric scoops for a while now. \
+Not landing — orbital passes. You come in on a shallow trajectory, open the \
+collection intakes, let the gas do the work, exit before pressure builds past \
+tolerances. He-3 concentrations are high in the upper troposphere. You don't \
+need to go deep.
+
+{target} is right there. The upper atmosphere is accessible. \
+I've transmitted the approach parameters to your navigation system.
+
+I should have told you about this earlier. I assumed you knew.
+
+— Yael"));
+            }
+        }
+    }
 }
 
 fn game_loop(gs: &mut GameState) {
@@ -894,12 +941,12 @@ fn game_loop(gs: &mut GameState) {
                 if !mine.is_empty() {
                     println!("  {BGREEN}[m] Mine{R}  {DIM}— {mine}{R}");
                 }
-                println!("  [p] Planet details  {DIM}({}){R}", planet.name);
+                println!("  [d] Planet details  {DIM}({}){R}", planet.name);
             }
         }
         println!("  [1] Scan this star system");
         println!("  [2] Land on a planet");
-        println!("  [3] Travel to a nearby system");
+        println!("  [n] Travel to a nearby system  {DIM}[3]{R}");
         println!("  [4] Open star chart");
         println!("  [5] Inspect your ship & inventory");
         println!("  [6] Periodic table reference");
@@ -911,7 +958,7 @@ fn game_loop(gs: &mut GameState) {
             format!("  [c] Fleet comms  (Yael · Reza)")
         };
         println!("{}", if unread > 0 { format!("  {}", comms_label) } else { comms_label });
-        println!("  [n] Send a note to your notebook");
+        println!("  [p] Post a note to your notebook");
         println!("  [s] Save game");
         println!("  [q] Quit  [?] Help  [a] ARIA");
 
@@ -933,21 +980,21 @@ fn game_loop(gs: &mut GameState) {
                     }
                 }
             }
-            "p" | "P" => {
+            "d" | "D" => {
                 if let Some(idx) = gs.player.landed_on {
                     inspect_planet(gs, idx);
                 }
             }
             "1" => scan_system(gs),
             "2" => land_menu(gs),
-            "3" => travel_menu(gs),
+            "n" | "N" | "3" => travel_menu(gs),
             "4" => star_chart(gs),
             "5" => ship_status(gs),
             "6" => periodic_table_menu(gs),
             "7" => physics_menu(gs),
             "8" => aria_chat(gs),
             "c" | "C" => comms_menu(gs),
-            "n" | "N" => send_note(gs),
+            "p" | "P" => send_note(gs),
             "s" | "S" => save_game(gs),
             "q" | "Q" => {
                 print!("\n  Save before quitting? [Y/n] ");
@@ -1105,6 +1152,31 @@ fn land_menu(gs: &mut GameState) {
 
 fn inspect_planet(gs: &mut GameState, idx: usize) {
     gs.player.landed_on = Some(idx);
+
+    // Atmospheric scoop — bypass surface approach for gas/ice giants if unlocked
+    {
+        use universe::planet::PlanetType;
+        let planet = &gs.current_system.planets[idx];
+        if matches!(planet.planet_type, PlanetType::GasGiant | PlanetType::IceGiant | PlanetType::HotJupiter) {
+            if gs.tech.has("atmo_scoop") {
+                do_atmo_scoop(gs, idx);
+                return;
+            } else {
+                clear();
+                print_header(&format!("APPROACH — {}", planet.name));
+                println!("  {BRED}INFRASTRUCTURE RISK: EXTREME{R}");
+                println!();
+                println!("  {}'s atmosphere has no accessible surface.", planet.name);
+                println!("  Pressure and temperature exceed substrate tolerances at all depths.");
+                println!();
+                println!("  {DIM}Some collectors use orbital scooping passes to harvest gas without");
+                println!("  descending. Ask your fleet if they know a way.{R}");
+                println!();
+                pause();
+                return;
+            }
+        }
+    }
 
     // Extreme infrastructure risk — ship destroyed on approach
     {
@@ -1444,6 +1516,117 @@ fn mine_yield_desc(pt: &universe::planet::PlanetType, temp_k: f64) -> &'static s
         OceanWorld                                  => "deuterium (liquid water)",
         Terrestrial if temp_k < 320.0               => "trace deuterium",
         _                                           => "",
+    }
+}
+
+/// Atmospheric scooping pass on a gas giant or ice giant.
+/// Yields He-3 (and D on ice giants) with a small hull damage risk per pass.
+fn do_atmo_scoop(gs: &mut GameState, idx: usize) {
+    use universe::planet::PlanetType;
+    use rand::Rng;
+
+    loop {
+        let planet = gs.current_system.planets[idx].clone();
+        let hull_col = if gs.ship.hull > 0.5 { BGREEN } else if gs.ship.hull > 0.25 { BYELLOW } else { BRED };
+
+        clear();
+        print_header(&format!("ATMOSPHERIC SCOOP — {}", planet.name));
+
+        println!("  Type              : {}", planet.planet_type.display());
+        println!("  Orbit             : {:.3} AU", planet.orbit_au);
+        println!("  Mass              : {:.1} M⊕", planet.mass_earth);
+
+        // Show He-3 fraction if detectable in atmosphere
+        let he3_frac = planet.atmosphere.components.iter()
+            .find(|c| c.symbol == "He-3" || c.symbol == "³He")
+            .map(|c| c.fraction)
+            .unwrap_or(0.0);
+        if he3_frac > 0.0 {
+            println!("  He-3 concentration: {:.3}%", he3_frac * 100.0);
+        }
+
+        println!();
+        println!("  {DIM}Hull integrity    :{R} {hull_col}{:.0}%{R}", gs.ship.hull * 100.0);
+        println!();
+
+        let risk_note = match planet.planet_type {
+            PlanetType::HotJupiter => format!("  {BYELLOW}Warning: high radiation environment — elevated hull wear per pass{R}"),
+            PlanetType::GasGiant   => format!("  {DIM}Manageable turbulence. Standard pass parameters apply.{R}"),
+            PlanetType::IceGiant   => format!("  {DIM}Cold upper atmosphere. Slower yield but lower hull stress.{R}"),
+            _                      => String::new(),
+        };
+        if !risk_note.is_empty() { println!("{}", risk_note); println!(); }
+
+        println!("  {BGREEN}[s] Initiate scoop pass{R}");
+        println!("  {DIM}[q] Depart{R}");
+        println!();
+
+        let choice = menu_key();
+        match choice.trim() {
+            "q" | "" => {
+                gs.player.landed_on = None;
+                return;
+            }
+            "s" | "S" => {
+                let mut rng = rand::rng();
+
+                // Yield and hull risk by planet type
+                let (he3_g, d_g, hull_dmg_min, hull_dmg_max) = match planet.planet_type {
+                    PlanetType::GasGiant   => (rng.random_range(400.0..2_000.0), 0.0,   0.0,  0.04),
+                    PlanetType::HotJupiter => (rng.random_range(800.0..4_000.0), 0.0,   0.04, 0.12),
+                    PlanetType::IceGiant   => (rng.random_range(200.0..800.0),   rng.random_range(400.0..1_500.0), 0.01, 0.06),
+                    _                      => (0.0, 0.0, 0.0, 0.0),
+                };
+
+                let dmg: f64 = rng.random_range(hull_dmg_min..=hull_dmg_max);
+                let hull_before = gs.ship.hull;
+                gs.ship.hull = (gs.ship.hull - dmg).max(0.0);
+
+                println!();
+                println!("  {DIM}Initiating scoop pass...{R}");
+                println!();
+
+                if he3_g > 0.0 {
+                    let added = gs.inventory.add("He-3", he3_g);
+                    println!("  He-3  {BGREEN}+{:.0}g{R}{}", added,
+                        if added < he3_g { format!("  {BRED}(cargo full, {:.0}g vented){R}", he3_g - added) } else { String::new() });
+                }
+                if d_g > 0.0 {
+                    let added = gs.inventory.add("D", d_g);
+                    println!("  D     {BGREEN}+{:.0}g{R}{}", added,
+                        if added < d_g { format!("  {BRED}(cargo full, {:.0}g vented){R}", d_g - added) } else { String::new() });
+                }
+                if dmg > 0.0 {
+                    let hull_col_after = if gs.ship.hull > 0.5 { BGREEN } else if gs.ship.hull > 0.25 { BYELLOW } else { BRED };
+                    println!("  Hull  {BRED}-{:.0}%{R}  →  {}{:.0}%{R}",
+                        dmg * 100.0, hull_col_after, gs.ship.hull * 100.0);
+                }
+
+                if gs.ship.hull <= 0.0 {
+                    println!();
+                    println!("  {BRED}Hull integrity lost on scoop exit. Perihelion I is gone.{R}");
+                    println!("  {DIM}Yael and Reza receive no signal.{R}");
+                    pause();
+                    let _ = save::save_ended(&gs.to_save());
+                    std::process::exit(0);
+                }
+
+                // Warn on low hull
+                if gs.ship.hull < 0.25 && hull_before >= 0.25 {
+                    println!();
+                    println!("  {BRED}Hull integrity critical. Further passes risk destruction.{R}");
+                }
+
+                println!();
+                let he3_have = gs.inventory.amount("He-3");
+                let d_have   = gs.inventory.amount("D");
+                println!("  {DIM}Cargo — He-3: {:.0}g  |  D: {:.0}g  |  Cargo used: {:.0}/{:.0}g{R}",
+                    he3_have, d_have,
+                    gs.inventory.total_mass_g(), gs.inventory.capacity_g);
+                pause();
+            }
+            _ => {}
+        }
     }
 }
 
@@ -1907,6 +2090,14 @@ fn apply_game_effect(gs: &mut GameState, effect: &GameEffect) -> bool {
                 false
             }
         }
+        GameEffect::UnlockFeature { feature } => {
+            if !gs.tech.has(feature) {
+                gs.tech.unlock(feature);
+                true
+            } else {
+                false
+            }
+        }
     }
 }
 
@@ -2079,6 +2270,16 @@ The third ship is {other_ship}, crewed by {other_name}.{effects}",
     )
 }
 
+fn md_skin() -> termimad::MadSkin {
+    use termimad::crossterm::style::Color as TC;
+    let mut skin = termimad::MadSkin::default();
+    skin.bold.set_fg(TC::Yellow);
+    skin.italic.set_fg(TC::Magenta);
+    for h in &mut skin.headers { h.set_fg(TC::Cyan); }
+    skin.inline_code.set_fg(TC::Green);
+    skin
+}
+
 fn group_chat(gs: &mut GameState) {
     clear();
     print_header("GROUP CHANNEL — Perihelion I · Threshold · Sable");
@@ -2150,18 +2351,15 @@ fn group_chat(gs: &mut GameState) {
                     cursor::MoveTo(0, row),
                     terminal::Clear(terminal::ClearType::FromCursorDown)
                 ).ok();
+            } else {
+                println!();
             }
 
             match result {
                 Ok(full_text) => {
                     let (clean_text, effects) = parse_effects(&full_text);
-                    use termimad::crossterm::style::Color as TC;
-                    let mut skin = termimad::MadSkin::default();
-                    skin.bold.set_fg(TC::Yellow);
-                    skin.italic.set_fg(TC::Magenta);
-                    for h in &mut skin.headers { h.set_fg(TC::Cyan); }
-                    skin.inline_code.set_fg(TC::Green);
-                    skin.print_text(&clean_text);
+                    let skin = md_skin();
+                    print!("{}", skin.text(&clean_text, Some(CONTENT_WIDTH)));
                     for effect in &effects {
                         let companion_name = gs.companions[idx].name;
                         if apply_game_effect(gs, effect) {
@@ -2366,18 +2564,15 @@ fn companion_chat(gs: &mut GameState, idx: usize) {
                 cursor::MoveTo(0, row),
                 terminal::Clear(terminal::ClearType::FromCursorDown)
             ).ok();
+        } else {
+            println!();
         }
 
         match result {
             Ok(full_text) => {
                 let (clean_text, effects) = parse_effects(&full_text);
-                use termimad::crossterm::style::Color as TC;
-                let mut skin = termimad::MadSkin::default();
-                skin.bold.set_fg(TC::Yellow);
-                skin.italic.set_fg(TC::Magenta);
-                for h in &mut skin.headers { h.set_fg(TC::Cyan); }
-                skin.inline_code.set_fg(TC::Green);
-                skin.print_text(&clean_text);
+                let skin = md_skin();
+                print!("{}", skin.text(&clean_text, Some(CONTENT_WIDTH)));
                 for effect in &effects {
                     if apply_game_effect(gs, effect) {
                         println!("  {BGREEN}▶ {}{R}", describe_effect(effect, name));
@@ -2391,7 +2586,6 @@ fn companion_chat(gs: &mut GameState, idx: usize) {
         println!();
     }
 }
-
 
 fn aria_chat(gs: &mut GameState) {
     clear();
@@ -2466,20 +2660,15 @@ fn aria_chat(gs: &mut GameState) {
                 cursor::MoveTo(0, row),
                 terminal::Clear(terminal::ClearType::FromCursorDown)
             ).ok();
+        } else {
+            println!();
         }
 
         match result {
             Ok(full_text) => {
                 let (clean_text, effects) = parse_effects(&full_text);
-                use termimad::crossterm::style::Color as TC;
-                let mut skin = termimad::MadSkin::default();
-                skin.bold.set_fg(TC::Yellow);
-                skin.italic.set_fg(TC::Magenta);
-                for h in &mut skin.headers {
-                    h.set_fg(TC::Cyan);
-                }
-                skin.inline_code.set_fg(TC::Green);
-                skin.print_text(&clean_text);
+                let skin = md_skin();
+                print!("{}", skin.text(&clean_text, Some(CONTENT_WIDTH)));
                 for effect in &effects {
                     if apply_game_effect(gs, effect) {
                         println!("  {BGREEN}▶ {}{R}", describe_effect(effect, "ARIA"));

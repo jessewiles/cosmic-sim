@@ -13,6 +13,8 @@ pub enum GameEffect {
     TransferFuel { amount: f64, to_player: bool },
     /// Transfer refined pellets between a companion's cargo and the player.
     TransferPellets { count: u32, to_player: bool },
+    /// Permanently unlock a named game feature (e.g. "atmo_scoop").
+    UnlockFeature { feature: String },
 }
 
 /// Parse `<effect>…</effect>` tags out of an LLM response.
@@ -69,6 +71,12 @@ pub fn describe_effect(effect: &GameEffect, source: &str) -> String {
                 format!("{} ← {} pellet{} drawn", source, count, if *count == 1 { "" } else { "s" })
             }
         }
+        GameEffect::UnlockFeature { feature } => {
+            match feature.as_str() {
+                "atmo_scoop" => "Atmospheric scooping unlocked — orbital passes on gas/ice giants now available".to_string(),
+                other        => format!("Capability unlocked: {}", other),
+            }
+        }
     }
 }
 
@@ -79,7 +87,14 @@ pub fn effect_instructions(source_role: &str) -> String {
         r#"  {"type": "set_objective", "text": "concise objective description"}
   {"type": "transfer_resource", "resource": "He-3" or "D", "amount_g": <float>, "to_player": <bool>}
   {"type": "transfer_fuel", "amount": <float>, "to_player": <bool>}
-  {"type": "transfer_pellets", "count": <int>, "to_player": <bool>}"#
+  {"type": "transfer_pellets", "count": <int>, "to_player": <bool>}
+  {"type": "unlock_feature", "feature": "atmo_scoop"}
+
+Unlockable features you know about:
+  atmo_scoop — orbital atmospheric scooping on gas giants and ice giants for He-3/D
+    collection without landing. Bypasses Extreme surface risk. Emit this unlock if the
+    player asks about alternative fuel sources, seems stuck for fuel, or the topic
+    comes up naturally. Do not force it; let it arise from the conversation."#
     } else {
         // ARIA is onboard — can only set objectives, not transfer external resources
         r#"  {"type": "set_objective", "text": "concise objective description"}"#
