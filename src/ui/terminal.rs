@@ -3,6 +3,9 @@ use rustyline;
 use crossterm::event::{read, Event, KeyCode, KeyModifiers};
 use crossterm::terminal::{enable_raw_mode, disable_raw_mode};
 
+/// Content width used throughout the game for text wrapping and rendering.
+pub const CONTENT_WIDTH: usize = 70;
+
 // ── ANSI colour helpers ───────────────────────────────────────────────────────
 
 pub const R:  &str = "\x1B[0m";   // reset
