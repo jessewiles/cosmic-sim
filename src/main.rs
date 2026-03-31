@@ -7,6 +7,7 @@ mod ui;
 mod ai;
 mod save;
 mod notes;
+mod campaign;
 
 use universe::galaxy::{Galaxy, GalaxyMode};
 use universe::system::StarSystem;
@@ -80,6 +81,10 @@ struct GameState {
     travel: Option<ActiveTravel>,
     /// Current mission objective, may be set/updated by ARIA or companions.
     objective: Option<String>,
+    /// Active campaign ID, or None for free exploration.
+    active_campaign: Option<String>,
+    /// Furthest distance from Sol achieved (light-years), for ReachDistance objectives.
+    max_dist_ly: f64,
 }
 
 impl GameState {
@@ -106,6 +111,8 @@ impl GameState {
             triggers_fired: std::collections::HashSet::new(),
             travel: None,
             objective: None,
+            active_campaign: None,
+            max_dist_ly: 0.0,
         }
     }
 
@@ -127,6 +134,8 @@ impl GameState {
             triggers_fired: s.triggers_fired.clone(),
             travel: None,
             objective: s.objective.clone(),
+            active_campaign: s.active_campaign.clone(),
+            max_dist_ly: s.max_dist_ly,
         }
     }
 
@@ -142,6 +151,8 @@ impl GameState {
             self.inbox.clone(),
             self.triggers_fired.clone(),
             self.objective.clone(),
+            self.active_campaign.clone(),
+            self.max_dist_ly,
         )
     }
 }
@@ -307,11 +318,15 @@ fn startup_menu() -> Option<GameState> {
         println!("  Saved games:");
         println!();
         for (i, s) in saves.iter().enumerate() {
-            println!("  [{}] {}  —  {}  —  {}  —  {}",
+            let campaign_label = s.active_campaign.as_deref()
+                .and_then(|id| campaign::all_campaigns().into_iter().find(|c| c.id == id))
+                .map(|c| format!("  [{}]", c.name))
+                .unwrap_or_default();
+            println!("  [{}] {}{}  —  {}  —  {}",
                 i + 1,
                 s.player.name,
+                campaign_label,
                 s.current_system.name,
-                save::mode_label(s.galaxy.mode),
                 s.timestamp_display(),
             );
         }
@@ -351,11 +366,44 @@ fn startup_menu() -> Option<GameState> {
         return None;
     }
 
-    let gs = GameState::new(name.clone(), mode);
+    // ── Campaign selection ───────────────────────────────────────────────────
+    let campaigns = campaign::all_campaigns();
     println!();
-    println!("  Greetings, {}. Your ship — {} — is fuelled and ready.", name, gs.ship.name);
-    println!("  You are docked at Mars Station Ares-7. The Sol system awaits.");
-    pause();
+    println!("  Choose your mission:");
+    println!();
+    for (i, c) in campaigns.iter().enumerate() {
+        println!("  [{}] {}  —  {}", i + 1, c.name, c.tagline);
+    }
+    println!("  [0] Free exploration");
+    println!();
+
+    let chosen_campaign: Option<campaign::Campaign> = loop {
+        let choice = menu_key();
+        if choice.trim() == "0" { break None; }
+        if let Ok(n) = choice.trim().parse::<usize>() {
+            if n >= 1 && n <= campaigns.len() {
+                break Some(campaigns.into_iter().nth(n - 1).unwrap());
+            }
+        }
+    };
+
+    let mut gs = GameState::new(name.clone(), mode);
+
+    if let Some(c) = chosen_campaign {
+        gs.active_campaign = Some(c.id.to_string());
+        clear();
+        print_header(&format!("MISSION BRIEF — {}", c.name));
+        println!();
+        typewrite(c.intro);
+        println!();
+        println!();
+        pause();
+    } else {
+        println!();
+        println!("  Greetings, {}. Your ship — {} — is fuelled and ready.", name, gs.ship.name);
+        println!("  You are docked at Mars Station Ares-7. The Sol system awaits.");
+        pause();
+    }
 
     Some(gs)
 }
@@ -880,10 +928,49 @@ I should have told you about this earlier. I assumed you knew.
     }
 }
 
+fn campaign_victory(gs: &mut GameState, c: &campaign::Campaign) {
+    clear();
+    print_header(&format!("MISSION COMPLETE — {}", c.name));
+    println!();
+    typewrite(c.win_text);
+    println!();
+    println!();
+    let [px, py, pz] = gs.player.position;
+    let dist = (px*px + py*py + pz*pz).sqrt();
+    println!("  {DIM}Distance from Sol   : {:.1} ly{R}", dist);
+    println!("  {DIM}Proper time elapsed : {:.1} years{R}", gs.player.proper_time_s / 31_557_600.0);
+    println!("  {DIM}Coord. time elapsed : {:.1} years{R}", gs.player.coordinate_time_s / 31_557_600.0);
+    println!("  {DIM}Hull integrity      : {:.0}%{R}", gs.ship.hull * 100.0);
+    println!("  {DIM}Systems visited     : {}{R}", gs.player.visited_systems.len());
+    println!();
+    pause();
+    let _ = save::save_ended(&gs.to_save());
+    std::process::exit(0);
+}
+
 fn game_loop(gs: &mut GameState) {
     loop {
         // Advance travel state (queues milestone messages, applies arrival)
         travel_tick(gs);
+
+        // Update max distance from Sol
+        {
+            let [px, py, pz] = gs.player.position;
+            let dist = (px*px + py*py + pz*pz).sqrt();
+            if dist > gs.max_dist_ly { gs.max_dist_ly = dist; }
+        }
+
+        // Check campaign completion
+        if let Some(ref campaign_id) = gs.active_campaign.clone() {
+            if !gs.triggers_fired.contains("campaign_complete") {
+                if let Some(c) = campaign::all_campaigns().into_iter().find(|c| c.id == campaign_id.as_str()) {
+                    if c.is_complete(&gs.player.visited_systems, gs.max_dist_ly) {
+                        gs.triggers_fired.insert("campaign_complete".to_string());
+                        campaign_victory(gs, &c);
+                    }
+                }
+            }
+        }
 
         // Deliver any newly triggered companion messages
         check_triggers(gs);
@@ -928,7 +1015,16 @@ fn game_loop(gs: &mut GameState) {
                 unread, if unread == 1 { "" } else { "s" }, from);
             println!();
         }
-        if let Some(obj) = &gs.objective {
+        // Campaign progress bar
+        if let Some(ref campaign_id) = gs.active_campaign.clone() {
+            if let Some(c) = campaign::all_campaigns().into_iter().find(|c| c.id == campaign_id.as_str()) {
+                let status = c.objectives_status(&gs.player.visited_systems, gs.max_dist_ly);
+                let done = status.iter().filter(|&&b| b).count();
+                let total = status.len();
+                let bar: String = status.iter().map(|&b| if b { "●" } else { "○" }).collect::<Vec<_>>().join(" ");
+                println!("  {BYELLOW}▶ {}{R}  {DIM}{bar}  {done}/{total}{R}", c.name);
+            }
+        } else if let Some(obj) = &gs.objective {
             println!("  {BYELLOW}▶ Objective:{R} {}", obj);
         } else {
             println!("  {DIM}Objective: mine He-3 and D · refine pellets [r] · load into tank [l] · travel further{R}");

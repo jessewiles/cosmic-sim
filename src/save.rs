@@ -51,6 +51,10 @@ pub struct SavedGame {
     pub triggers_fired: std::collections::HashSet<String>,
     #[serde(default)]
     pub objective: Option<String>,
+    #[serde(default)]
+    pub active_campaign: Option<String>,
+    #[serde(default)]
+    pub max_dist_ly: f64,
     /// True once the game has ended (death or victory). Ended saves are hidden
     /// from the load screen so they don't clutter the slot list.
     #[serde(default)]
@@ -69,12 +73,14 @@ impl SavedGame {
         inbox: Vec<crate::CompanionMessage>,
         triggers_fired: std::collections::HashSet<String>,
         objective: Option<String>,
+        active_campaign: Option<String>,
+        max_dist_ly: f64,
     ) -> Self {
         let saved_at = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
-        SavedGame { slot, saved_at, player, ship, inventory, galaxy, current_system, tech, inbox, triggers_fired, objective, ended: false }
+        SavedGame { slot, saved_at, player, ship, inventory, galaxy, current_system, tech, inbox, triggers_fired, objective, active_campaign, max_dist_ly, ended: false }
     }
 
     /// Human-readable timestamp, e.g. "2024-03-21 14:05".
